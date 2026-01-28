@@ -86,12 +86,28 @@ class GameScreen(
     private lateinit var winnerLabel: Label
     private lateinit var scoreBoardLabel: Label
 
-    // Sounds
-    private var soundHitWall: com.badlogic.gdx.audio.Sound? = null
-    private var soundHitPusher: com.badlogic.gdx.audio.Sound? = null
-    private var soundGoalWin: com.badlogic.gdx.audio.Sound? = null
-    private var soundGoalLose: com.badlogic.gdx.audio.Sound? = null
-    private val tempSoundFiles = ArrayList<FileHandle>()
+    // Sounds (with graceful degradation)
+    private val soundCollision: com.badlogic.gdx.audio.Sound? = try {
+        val sound = Gdx.audio.newSound(Gdx.files.internal("collision.ogg"))
+        Gdx.app.log("GameScreen", "✅ Successfully loaded collision.ogg")
+        sound
+    } catch (e: Exception) {
+        Gdx.app.error("GameScreen", "❌ Failed to load collision.ogg: ${e.message}")
+        null
+    }
+
+    private val soundGoal: com.badlogic.gdx.audio.Sound? = try {
+        val sound = Gdx.audio.newSound(Gdx.files.internal("goal.ogg"))
+        Gdx.app.log("GameScreen", "✅ Successfully loaded goal.ogg")
+        sound
+    } catch (e: Exception) {
+        Gdx.app.error("GameScreen", "❌ Failed to load goal.ogg: ${e.message}")
+        null
+    }
+
+    private var lastCollisionSoundTime = 0L
+    private val minCollisionIntervalMs = 40L  // Reduced from 80ms to allow more sounds
+    private val impulseThreshold = 0.01f      // Very low threshold to catch gentle collisions
 
     private val world: World
     private val worldWalls = ArrayList<Body>()
@@ -126,6 +142,7 @@ class GameScreen(
     private var nextGoalId = 1
     private var localStartReady = false
     private var remoteStartReady = false
+    private var currentFrameGoal: PlayerRole? = null
 
     private val puckBaseColor = Color(0.95f, 0.9f, 0.2f, 1f)
     private val puckRadiusPx = 28f
@@ -139,6 +156,7 @@ class GameScreen(
     private var pusherRadiusPx = 18f
     private val pusherTouchOffsetWorld = pusherRadiusWorld * 1.4f
     private val maxPuckSpeedWorld = 10f
+    private val maxPusherSpeedWorld = 15f
     private val midlineAllowanceWorld = pusherRadiusWorld * 0.35f
     private val puckSnapDistanceWorld = 0.25f
     private val puckLerpSpeed = 12f
@@ -183,7 +201,7 @@ class GameScreen(
         Box2D.init()
         world = World(Vector2(0f, 0f), true)
         setupPhysicsContactListener()
-        generateSounds()
+        // Sound loading moved to property initialization
 
         roleLabel.setAlignment(Align.left)
         hintLabel.setAlignment(Align.center)
@@ -275,59 +293,6 @@ class GameScreen(
         }
     }
 
-    private fun generateSounds() {
-        // Generate simple beep sounds using PCM
-        soundHitWall = createBeep(440f, 0.05f)     // A4
-        soundHitPusher = createBeep(220f, 0.08f)   // A3
-        soundGoalWin = createBeep(880f, 0.5f)      // A5
-        soundGoalLose = createBeep(110f, 0.5f)     // A2
-    }
-
-    private fun createBeep(frequency: Float, duration: Float): com.badlogic.gdx.audio.Sound {
-        val sampleRate = 44100
-        val numSamples = (duration * sampleRate).toInt()
-        val samples = ShortArray(numSamples)
-        for (i in 0 until numSamples) {
-            val t = i.toDouble() / sampleRate
-            samples[i] = (Math.sin(2.0 * Math.PI * frequency * t) * 32767.0).toInt().toShort()
-        }
-        
-        // Write to a temporary WAV file to load as Sound
-        val file = Gdx.files.local("tmp_sound_${frequency.toInt()}_${(duration*100).toInt()}.wav")
-        writeWav(file, sampleRate, samples)
-        tempSoundFiles.add(file)
-        return Gdx.audio.newSound(file)
-    }
-
-    private fun writeWav(file: com.badlogic.gdx.files.FileHandle, sampleRate: Int, samples: ShortArray) {
-        val byteBuffer = ByteBuffer.allocate(44 + samples.size * 2)
-        byteBuffer.order(ByteOrder.LITTLE_ENDIAN)
-        
-        // RIFF header
-        byteBuffer.put("RIFF".toByteArray())
-        byteBuffer.putInt(36 + samples.size * 2)
-        byteBuffer.put("WAVE".toByteArray())
-        
-        // fmt chunk
-        byteBuffer.put("fmt ".toByteArray())
-        byteBuffer.putInt(16) // Subchunk1Size
-        byteBuffer.putShort(1) // AudioFormat (PCM)
-        byteBuffer.putShort(1) // NumChannels
-        byteBuffer.putInt(sampleRate)
-        byteBuffer.putInt(sampleRate * 2) // ByteRate
-        byteBuffer.putShort(2) // BlockAlign
-        byteBuffer.putShort(16) // BitsPerSample
-        
-        // data chunk
-        byteBuffer.put("data".toByteArray())
-        byteBuffer.putInt(samples.size * 2)
-        for (sample in samples) {
-            byteBuffer.putShort(sample)
-        }
-        
-        file.writeBytes(byteBuffer.array(), false)
-    }
-
     private fun setupPhysicsContactListener() {
         world.setContactListener(object : com.badlogic.gdx.physics.box2d.ContactListener {
             override fun beginContact(contact: com.badlogic.gdx.physics.box2d.Contact) {
@@ -335,19 +300,74 @@ class GameScreen(
                 val fixtureB = contact.fixtureB
                 val bodyA = fixtureA.body
                 val bodyB = fixtureB.body
-
                 val isPuck = bodyA == puckBody || bodyB == puckBody
-                val isWall = worldWalls.contains(bodyA) || worldWalls.contains(bodyB)
-                val isPusher = bodyA == localPusherBody || bodyB == localPusherBody || 
-                               bodyA == remotePusherBody || bodyB == remotePusherBody
 
-                if (isPuck && isWall) soundHitWall?.play(0.4f)
-                if (isPuck && isPusher) soundHitPusher?.play(0.6f)
+                if (isPuck) {
+                    val otherFixture = if (bodyA == puckBody) fixtureB else fixtureA
+                    val data = otherFixture.userData
+                    if (data == "goal_top") {
+                        currentFrameGoal = PlayerRole.PLAYER1
+                    } else if (data == "goal_bottom") {
+                        currentFrameGoal = PlayerRole.PLAYER2
+                    }
+                }
             }
             override fun endContact(contact: com.badlogic.gdx.physics.box2d.Contact) {}
             override fun preSolve(contact: com.badlogic.gdx.physics.box2d.Contact, oldManifold: com.badlogic.gdx.physics.box2d.Manifold) {}
-            override fun postSolve(contact: com.badlogic.gdx.physics.box2d.Contact, impulse: com.badlogic.gdx.physics.box2d.ContactImpulse) {}
+            override fun postSolve(contact: com.badlogic.gdx.physics.box2d.Contact, impulse: com.badlogic.gdx.physics.box2d.ContactImpulse) {
+                val maxImpulse = impulse.normalImpulses.maxOrNull() ?: 0f
+
+                // DEBUG: Log all puck collisions to diagnose audio issues
+                val bodyA = contact.fixtureA.body
+                val bodyB = contact.fixtureB.body
+                val isPuck = bodyA == puckBody || bodyB == puckBody
+
+                // Log ALL puck collisions regardless of threshold to see actual values
+                if (isPuck && maxImpulse > 0.001f) {
+                    Gdx.app.log("GameScreen", "🎯 Puck collision detected! Impulse: $maxImpulse (threshold: $impulseThreshold)")
+                }
+
+                if (maxImpulse < impulseThreshold) return
+
+                val now = System.currentTimeMillis()
+                val timeSinceLastSound = now - lastCollisionSoundTime
+                if (timeSinceLastSound < minCollisionIntervalMs) {
+                    Gdx.app.log("GameScreen", "⏱️ Sound debounced (${timeSinceLastSound}ms < ${minCollisionIntervalMs}ms, impulse: $maxImpulse)")
+                    return
+                }
+
+                if (isPuck) {
+                    lastCollisionSoundTime = now
+                    // Logarithmic volume mapping for more natural feel
+                    val volume = calculateCollisionVolume(maxImpulse)
+                    // Slight pitch variation 0.95 to 1.05 to reduce ear fatigue
+                    val pitch = 0.95f + Random.nextFloat() * 0.1f
+
+                    val soundId = soundCollision?.play(volume, pitch, 0f)
+                    if (soundId != null && soundId != -1L) {
+                        Gdx.app.log("GameScreen", "🔊 Playing collision sound! Impulse: $maxImpulse, Volume: $volume, Pitch: $pitch, SoundID: $soundId")
+                    } else {
+                        Gdx.app.error("GameScreen", "❌ Sound playback FAILED! soundCollision is ${if (soundCollision == null) "NULL" else "not null but returned $soundId"}")
+                    }
+                }
+            }
         })
+    }
+
+    /**
+     * Calculates volume for collision sounds using logarithmic curve.
+     * Human hearing is logarithmic, so this provides more natural feeling.
+     */
+    private fun calculateCollisionVolume(impulse: Float): Float {
+        // Even more aggressive scaling for very low impulses
+        val normalized = MathUtils.clamp(impulse / 2f, 0f, 1f) // Changed from /3f to /2f
+        // Square root provides better perceptual volume distribution
+        val perceptual = kotlin.math.sqrt(normalized)
+        // High minimum volume (0.5) to ensure sounds are always audible
+        val volume = MathUtils.clamp(perceptual * 0.6f + 0.5f, 0.5f, 1.0f)
+
+        Gdx.app.log("GameScreen", "📊 Volume calculation: impulse=$impulse → normalized=$normalized → perceptual=$perceptual → volume=$volume")
+        return volume
     }
 
     private fun resetGame() {
@@ -436,6 +456,11 @@ class GameScreen(
         resetPusherPositions()
         puckBody?.isActive = false
         hasPuckTarget = false
+
+        // TEST: Play test sound on screen load to verify audio system works
+        Gdx.app.log("GameScreen", "🎵 Testing audio system on screen show...")
+        val testCollisionId = soundCollision?.play(0.8f, 1.0f, 0f)
+        Gdx.app.log("GameScreen", "🎵 Test collision sound ID: $testCollisionId (${if (testCollisionId != null && testCollisionId != -1L) "SUCCESS" else "FAILED"})")
     }
 
     override fun hide() {
@@ -852,7 +877,7 @@ class GameScreen(
         val bodyDef = BodyDef().apply {
             type = BodyDef.BodyType.DynamicBody
             position.set(x, y)
-            linearDamping = 0.3f
+            linearDamping = 0.2f
             fixedRotation = true
             bullet = true
         }
@@ -862,8 +887,8 @@ class GameScreen(
         val fixtureDef = FixtureDef().apply {
             this.shape = shape
             density = 1f
-            restitution = 1f
-            friction = 0f
+            restitution = 0.9f
+            friction = 0.05f
         }
         val body = world.createBody(bodyDef)
         val fixture = body.createFixture(fixtureDef)
@@ -882,8 +907,8 @@ class GameScreen(
         }
         val fixtureDef = FixtureDef().apply {
             this.shape = shape
-            restitution = 1f
-            friction = 0f
+            restitution = 0.8f
+            friction = 0.2f
         }
         val body = world.createBody(bodyDef)
         val fixture = body.createFixture(fixtureDef)
@@ -913,33 +938,37 @@ class GameScreen(
         val centerX = worldWidth / 2f
 
         val bodyDef = BodyDef().apply { type = BodyDef.BodyType.StaticBody }
+        val wallThickness = 0.5f // Thick walls to prevent tunneling
 
-        fun addEdge(x1: Float, y1: Float, x2: Float, y2: Float) {
-            val shape = com.badlogic.gdx.physics.box2d.EdgeShape().apply {
-                set(x1, y1, x2, y2)
+        fun addWallBox(x: Float, y: Float, width: Float, height: Float) {
+            val shape = com.badlogic.gdx.physics.box2d.PolygonShape().apply {
+                // setAsBox takes half-width and half-height, and local center
+                setAsBox(width / 2f, height / 2f, Vector2(width / 2f, height / 2f), 0f)
             }
             val fixtureDef = FixtureDef().apply {
                 this.shape = shape
-                restitution = 1f
-                friction = 0f
+                restitution = 0.9f
+                friction = 0.1f
             }
-            val body = world.createBody(bodyDef)
+            val body = world.createBody(bodyDef.apply { position.set(x, y) })
             body.createFixture(fixtureDef)
             shape.dispose()
             worldWalls.add(body)
         }
 
-        // Left and right walls
-        addEdge(left, bottom, left, top)
-        addEdge(right, bottom, right, top)
+        // Left wall
+        addWallBox(left - wallThickness, bottom, wallThickness, top - bottom)
+        
+        // Right wall
+        addWallBox(right, bottom, wallThickness, top - bottom)
 
-        // Top wall with goal opening
-        addEdge(left, top, centerX - goalHalf, top)
-        addEdge(centerX + goalHalf, top, right, top)
+        // Top walls (left and right of goal)
+        addWallBox(left, top, centerX - goalHalf - left, wallThickness)
+        addWallBox(centerX + goalHalf, top, right - (centerX + goalHalf), wallThickness)
 
-        // Bottom wall with goal opening
-        addEdge(left, bottom, centerX - goalHalf, bottom)
-        addEdge(centerX + goalHalf, bottom, right, bottom)
+        // Bottom walls (left and right of goal)
+        addWallBox(left, bottom - wallThickness, centerX - goalHalf - left, wallThickness)
+        addWallBox(centerX + goalHalf, bottom - wallThickness, right - (centerX + goalHalf), wallThickness)
 
         val sensorDepth = (puckRadiusPx / ppm) * 1.2f
         fun addGoalSensor(tag: String, centerY: Float) {
@@ -1007,7 +1036,7 @@ class GameScreen(
             pendingResize = false
         }
         ensurePushers()
-        
+
         if (gameState != GameState.PLAYING) return
 
         accumulator += delta
@@ -1022,6 +1051,16 @@ class GameScreen(
             accumulator = 0f
         }
 
+        // Clamp puck speed to prevent unrealistic super-shots
+        puckBody?.let { body ->
+            val vel = body.linearVelocity
+            val speed = vel.len()
+            if (speed > maxPuckSpeedWorld) {
+                vel.scl(maxPuckSpeedWorld / speed)
+                body.setLinearVelocity(vel.x, vel.y)
+            }
+        }
+
         checkGoals()
     }
 
@@ -1030,22 +1069,11 @@ class GameScreen(
         if (gameState != GameState.PLAYING) return
         if (playerRole != PlayerRole.PLAYER1) return // Only host detects goals
         
-        val body = puckBody ?: return
-        val pos = body.position
-        val threshold = (puckRadiusPx / ppm) * 0.5f
+        val goal = currentFrameGoal
+        currentFrameGoal = null
         
-        val left = playableLeftWorld()
-        val right = playableRightWorld()
-        val goalHalf = goalOpeningHalfWorld(left, right)
-        val centerX = worldWidth / 2f
-        
-        // Check if puck is within the X-range of the goal
-        if (pos.x >= centerX - goalHalf && pos.x <= centerX + goalHalf) {
-            if (pos.y < playableBottomWorld() - threshold) {
-                registerGoal(PlayerRole.PLAYER2) // Bottom goal -> P2 scores
-            } else if (pos.y > playableTopWorld() + threshold) {
-                registerGoal(PlayerRole.PLAYER1) // Top goal -> P1 scores
-            }
+        if (goal != null) {
+            registerGoal(goal)
         }
     }
 
@@ -1087,7 +1115,8 @@ class GameScreen(
             pendingRespawnScorer = if (playerRole == PlayerRole.PLAYER1) goal.scorer else null
             
             // Play sounds
-            if (playerRole == goal.scorer) soundGoalWin?.play() else soundGoalLose?.play()
+            val goalSoundId = soundGoal?.play(0.9f, 1.0f, 0f)
+            Gdx.app.log("GameScreen", "⚽ Goal sound triggered! SoundID: $goalSoundId, Scorer: ${goal.scorer}")
         }
         
         puckBody?.setLinearVelocity(0f, 0f)
@@ -1107,9 +1136,10 @@ class GameScreen(
             setLinearVelocity(0f, 0f)
             isActive = false
         }
-        
-        // Final sound
-        if (isLocalWinner) soundGoalWin?.play() else soundGoalLose?.play()
+
+        // Final victory sound (full volume, higher pitch for drama)
+        val victorySoundId = soundGoal?.play(1.0f, 1.05f, 0f)
+        Gdx.app.log("GameScreen", "🏆 Victory sound triggered! SoundID: $victorySoundId, Winner: $winner")
     }
 
     private fun updateGoalOverlayTimer(delta: Float) {
@@ -1158,10 +1188,16 @@ class GameScreen(
         clampLocalPusher(target.x, target.y, localPusherTarget)
 
         val dt = timeStep
-        val vx = (localPusherTarget.x - lastLocalPusherPos.x) / dt
-        val vy = (localPusherTarget.y - lastLocalPusherPos.y) / dt
-        body.setTransform(localPusherTarget.x, localPusherTarget.y, 0f)
-        body.setLinearVelocity(vx, vy)
+        // Calculate velocity needed to reach target from CURRENT body position
+        val currentPos = body.position
+        val vx = (localPusherTarget.x - currentPos.x) / dt
+        val vy = (localPusherTarget.y - currentPos.y) / dt
+
+        // Clamp to max pusher speed to prevent extreme velocities
+        val clampedVx = MathUtils.clamp(vx, -maxPusherSpeedWorld, maxPusherSpeedWorld)
+        val clampedVy = MathUtils.clamp(vy, -maxPusherSpeedWorld, maxPusherSpeedWorld)
+
+        body.setLinearVelocity(clampedVx, clampedVy)
         body.isAwake = true
         lastLocalPusherPos.set(localPusherTarget)
     }
@@ -1171,17 +1207,20 @@ class GameScreen(
         ensurePushers()
         val body = remotePusherBody ?: return
         val clampedTarget = clampRemotePusher(remotePusherTarget.x, remotePusherTarget.y, tempVector)
+        
         val alpha = MathUtils.clamp(delta * 12f, 0f, 1f)
         val nextX = MathUtils.lerp(body.position.x, clampedTarget.x, alpha)
         val nextY = MathUtils.lerp(body.position.y, clampedTarget.y, alpha)
+
         val dt = timeStep
-        val vx = (nextX - lastRemotePusherPos.x) / dt
-        val vy = (nextY - lastRemotePusherPos.y) / dt
-        body.setTransform(nextX, nextY, 0f)
-        body.setLinearVelocity(
-            MathUtils.lerp(vx, remotePusherVelocity.x, 0.35f),
-            MathUtils.lerp(vy, remotePusherVelocity.y, 0.35f)
-        )
+        val vx = (nextX - body.position.x) / dt
+        val vy = (nextY - body.position.y) / dt
+
+        // Clamp to max pusher speed to prevent extreme velocities from network
+        val clampedVx = MathUtils.clamp(vx, -maxPusherSpeedWorld, maxPusherSpeedWorld)
+        val clampedVy = MathUtils.clamp(vy, -maxPusherSpeedWorld, maxPusherSpeedWorld)
+
+        body.setLinearVelocity(clampedVx, clampedVy)
         body.isAwake = true
         lastRemotePusherPos.set(nextX, nextY)
     }
@@ -1345,15 +1384,8 @@ class GameScreen(
         shapeRenderer.dispose()
         spriteBatch.dispose()
         hudStage.dispose()
-        soundHitWall?.dispose()
-        soundHitPusher?.dispose()
-        soundGoalWin?.dispose()
-        soundGoalLose?.dispose()
-        tempSoundFiles.forEach { file ->
-            if (file.exists()) {
-                file.delete()
-            }
-        }
+        soundCollision?.dispose()
+        soundGoal?.dispose()
         world.dispose()
     }
 }

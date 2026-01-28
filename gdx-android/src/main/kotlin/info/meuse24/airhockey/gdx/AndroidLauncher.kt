@@ -24,6 +24,10 @@ class AndroidLauncher : AndroidApplication(), ViewModelStoreOwner {
         val config = AndroidApplicationConfiguration().apply {
             useAccelerometer = false
             useCompass = false
+            // Explicitly disable immersive mode to ensure audio works
+            useImmersiveMode = false
+            // Ensure audio is NOT disabled
+            // (disableAudio is false by default, but being explicit)
         }
         initialize(AirHockeyGame(networkViewModel.networkManager), config)
         ensurePermissionsAndInitNetwork()
