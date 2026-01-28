@@ -7,6 +7,7 @@ interface P2PNetworkManager {
     val peers: StateFlow<List<PeerDevice>>
     val stats: StateFlow<NetworkStats>
     val lastError: StateFlow<String?>
+    val connectedPeer: StateFlow<PeerDevice?>
     val playerRole: StateFlow<PlayerRole?>
     val roleVerified: StateFlow<Boolean>
     val startGameSignal: StateFlow<Long>

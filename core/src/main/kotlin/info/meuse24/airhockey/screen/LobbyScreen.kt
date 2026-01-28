@@ -13,6 +13,7 @@ import com.badlogic.gdx.utils.viewport.ScreenViewport
 import info.meuse24.airhockey.AirHockeyGame
 import info.meuse24.airhockey.network.NetworkState
 import info.meuse24.airhockey.network.P2PNetworkManager
+import info.meuse24.airhockey.network.PlayerRole
 
 class LobbyScreen(
     private val game: AirHockeyGame,
@@ -29,7 +30,11 @@ class LobbyScreen(
     private val selectHintLabel = Label("Select a player to connect", SimpleUi.skin, "small")
 
     private var lastPeerHash = 0
+    private var lastRole: PlayerRole? = null
+    private var lastSelectedPeerAddress: String? = null
+    private var lastConnectedPeerAddress: String? = null
     private var lastHandledStartSignal = 0L
+    private var selectedPeerAddress: String? = null
 
     init {
         peerTable.top().left()
@@ -107,9 +112,18 @@ class LobbyScreen(
         }
 
         val peers = networkManager.peers.value
+        val connectedPeerAddress = networkManager.connectedPeer.value?.address
         val peerHash = peers.hashCode()
-        if (peerHash != lastPeerHash) {
+        val selectedAddress = selectedPeerAddress
+        if (peerHash != lastPeerHash ||
+            lastRole != role ||
+            lastSelectedPeerAddress != selectedAddress ||
+            lastConnectedPeerAddress != connectedPeerAddress
+        ) {
             lastPeerHash = peerHash
+            lastRole = role
+            lastSelectedPeerAddress = selectedAddress
+            lastConnectedPeerAddress = connectedPeerAddress
             peerTable.clearChildren()
             if (peers.isEmpty()) {
                 peerTable.add(Label("No players found", SimpleUi.skin, "small")).center().padTop(20f).row()
@@ -117,10 +131,22 @@ class LobbyScreen(
             } else {
                 selectHintLabel.isVisible = true
                 peers.forEach { peer ->
-                    val button = TextButton("${peer.name}", SimpleUi.skin, "peer")
+                    val remoteRole = when (role) {
+                        PlayerRole.PLAYER1 -> PlayerRole.PLAYER2
+                        PlayerRole.PLAYER2 -> PlayerRole.PLAYER1
+                        else -> null
+                    }
+                    val isSelectedOrConnected = peer.address == selectedAddress || peer.address == connectedPeerAddress
+                    val label = if (isSelectedOrConnected && remoteRole != null) {
+                        "${peer.name} (${remoteRole.displayName})"
+                    } else {
+                        peer.name
+                    }
+                    val button = TextButton(label, SimpleUi.skin, "peer")
                     button.label.setEllipsis(true)
                     button.addListener(object : ClickListener() {
                         override fun clicked(event: InputEvent?, x: Float, y: Float) {
+                            selectedPeerAddress = peer.address
                             networkManager.connect(peer)
                         }
                     })

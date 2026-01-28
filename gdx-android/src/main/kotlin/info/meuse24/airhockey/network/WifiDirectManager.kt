@@ -62,6 +62,9 @@ class WifiDirectManager(
     private val _lastError = MutableStateFlow<String?>(null)
     override val lastError = _lastError.asStateFlow()
 
+    private val _connectedPeer = MutableStateFlow<PeerDevice?>(null)
+    override val connectedPeer = _connectedPeer.asStateFlow()
+
     private val _playerRole = MutableStateFlow<PlayerRole?>(null)
     override val playerRole = _playerRole.asStateFlow()
 
@@ -240,6 +243,7 @@ class WifiDirectManager(
         android.util.Log.d("WifiDirectManager", "Role assigned: ${_playerRole.value}")
         _roleVerified.value = false
         pendingRoleHandshakeId = null
+        _connectedPeer.value = null
         udpTransport = UdpTransport(
             isHost,
             hostAddress,
@@ -247,6 +251,11 @@ class WifiDirectManager(
             ::handleCriticalEvent,
             ::handleGameData
         ).apply { start() }
+        updateConnectedPeerFromGroupInfo()
+        scope.launch {
+            delay(500)
+            updateConnectedPeerFromGroupInfo()
+        }
         if (!isHost) {
             udpTransport?.sendCriticalEvent(RoleProtocol.buildRoleRequest())
         }
@@ -288,6 +297,7 @@ class WifiDirectManager(
         _pusherSyncSignal.value = null
         _puckRequestSignal.value = 0L
         _goalSignal.value = null
+        _connectedPeer.value = null
     }
 
     private fun handleDisconnect() {
@@ -296,6 +306,7 @@ class WifiDirectManager(
         _lastError.value = null
         _playerRole.value = null
         _roleVerified.value = false
+        _connectedPeer.value = null
         pendingRoleHandshakeId = null
         roleTimeoutJob?.cancel()
         roleTimeoutJob = null
@@ -385,6 +396,24 @@ class WifiDirectManager(
             nearbyGranted
         } else {
             fineGranted || coarseGranted
+        }
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun updateConnectedPeerFromGroupInfo() {
+        if (!hasP2pPermissions()) return
+        p2pManager.requestGroupInfo(channel) { group ->
+            if (group == null) return@requestGroupInfo
+            val peer = if (currentIsHost) {
+                val client = group.clientList.firstOrNull()
+                client?.let { PeerDevice(it.deviceName ?: "Unknown", it.deviceAddress) }
+            } else {
+                val owner = group.owner
+                owner?.let { PeerDevice(it.deviceName ?: "Unknown", it.deviceAddress) }
+            }
+            if (peer != null) {
+                _connectedPeer.value = peer
+            }
         }
     }
 
