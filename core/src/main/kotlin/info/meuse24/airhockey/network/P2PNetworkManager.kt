@@ -20,6 +20,7 @@ interface P2PNetworkManager {
 
     fun initialize()
     fun discoverPeers()
+    fun stopPeerDiscovery()
     fun connect(peer: PeerDevice)
     fun disconnect()
     fun release()

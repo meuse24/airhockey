@@ -58,15 +58,15 @@ class GameScreen(
 ) : ScreenAdapter() {
     private val shapeRenderer = ShapeRenderer()
     private val spriteBatch = SpriteBatch()
-    private val goalFont: BitmapFont = SimpleUi.skin.getFont("default-font")
+    private val goalFont: BitmapFont = SimpleUi.skin.getFont(SimpleUi.SKIN_FONT_DEFAULT)
     private val goalLayout = GlyphLayout()
     private val viewport = ScreenViewport()
     private val hudStage = Stage(viewport)
-    private val roleLabel = Label("", SimpleUi.skin, "title")
-    private val hintLabel = Label("Tap Spawn to place puck", SimpleUi.skin, "small")
-    private val backButton = TextButton("Back", SimpleUi.skin, "danger")
-    private val spawnButton = TextButton("Spawn Puck", SimpleUi.skin, "success")
-    private val networkIndicator = Image(SimpleUi.skin.getDrawable("pixel"))
+    private val roleLabel = Label("", SimpleUi.skin, SimpleUi.STYLE_TITLE)
+    private val hintLabel = Label("Tap Spawn to place puck", SimpleUi.skin, SimpleUi.STYLE_SMALL)
+    private val backButton = TextButton("Back", SimpleUi.skin, SimpleUi.STYLE_DANGER)
+    private val spawnButton = TextButton("Spawn Puck", SimpleUi.skin, SimpleUi.STYLE_SUCCESS)
+    private val networkIndicator = Image(SimpleUi.skin.getDrawable(SimpleUi.SKIN_PIXEL))
     private var playerRole: PlayerRole? = null
     private lateinit var startButton: TextButton
     private lateinit var retryButton: TextButton
@@ -104,6 +104,9 @@ class GameScreen(
     private val lastLocalPusherPos = Vector2()
     private val lastRemotePusherPos = Vector2()
     private val remotePusherVelocity = Vector2()
+    private val puckTargetPos = Vector2()
+    private val puckTargetVel = Vector2()
+    private var hasPuckTarget = false
     private val touchVector = Vector2()
     private val tempVector = Vector2()
     private var lastSpawnId = 0
@@ -137,6 +140,8 @@ class GameScreen(
     private val pusherTouchOffsetWorld = pusherRadiusWorld * 1.4f
     private val maxPuckSpeedWorld = 10f
     private val midlineAllowanceWorld = pusherRadiusWorld * 0.35f
+    private val puckSnapDistanceWorld = 0.25f
+    private val puckLerpSpeed = 12f
 
     private val gestureDetector = GestureDetector(object : GestureDetector.GestureListener {
         override fun touchDown(x: Float, y: Float, pointer: Int, button: Int): Boolean = false
@@ -156,6 +161,7 @@ class GameScreen(
         ): Boolean = false
         override fun pinchStop() {}
     })
+    private val inputMultiplexer = InputMultiplexer(gestureDetector, hudStage)
 
     // Field colors
     private val fieldColor = Color(0.05f, 0.1f, 0.15f, 1f)
@@ -188,7 +194,7 @@ class GameScreen(
             setFillParent(true)
             top().pad(16f)
             add(roleLabel).expandX().left().padLeft(8f)
-            scoreBoardLabel = Label("P1 0 : 0 P2", SimpleUi.skin, "default").apply {
+            scoreBoardLabel = Label("P1 0 : 0 P2", SimpleUi.skin, SimpleUi.STYLE_DEFAULT).apply {
                 setAlignment(Align.center)
             }
             add(scoreBoardLabel).expandX().center()
@@ -231,9 +237,9 @@ class GameScreen(
     private fun setupOverlays() {
         startOverlay = Table().apply {
             setFillParent(true)
-            background = SimpleUi.skin.newDrawable("pixel", Color(0f, 0f, 0f, 0.6f))
-            startButton = TextButton("START MATCH", SimpleUi.skin, "success")
-            add(Label("Air Hockey P2P", SimpleUi.skin, "title")).padBottom(40f).row()
+            background = SimpleUi.skin.newDrawable(SimpleUi.SKIN_PIXEL, Color(0f, 0f, 0f, 0.6f))
+            startButton = TextButton("START MATCH", SimpleUi.skin, SimpleUi.STYLE_SUCCESS)
+            add(Label("Air Hockey P2P", SimpleUi.skin, SimpleUi.STYLE_TITLE)).padBottom(40f).row()
             add(startButton).width(400f).height(100f)
             startButton.addListener(object : com.badlogic.gdx.scenes.scene2d.utils.ClickListener() {
                 override fun clicked(event: com.badlogic.gdx.scenes.scene2d.InputEvent?, x: Float, y: Float) {
@@ -244,14 +250,14 @@ class GameScreen(
 
         gameOverOverlay = Table().apply {
             setFillParent(true)
-            background = SimpleUi.skin.newDrawable("pixel", Color(0f, 0f, 0f, 0.8f))
+            background = SimpleUi.skin.newDrawable(SimpleUi.SKIN_PIXEL, Color(0f, 0f, 0f, 0.8f))
             isVisible = false
-            winnerLabel = Label("YOU WIN!", SimpleUi.skin, "title")
+            winnerLabel = Label("YOU WIN!", SimpleUi.skin, SimpleUi.STYLE_TITLE)
             add(winnerLabel).padBottom(40f).row()
             
             val btnTable = Table()
-            retryButton = TextButton("RETRY", SimpleUi.skin, "success")
-            val quitBtn = TextButton("QUIT", SimpleUi.skin, "danger")
+            retryButton = TextButton("RETRY", SimpleUi.skin, SimpleUi.STYLE_SUCCESS)
+            val quitBtn = TextButton("QUIT", SimpleUi.skin, SimpleUi.STYLE_DANGER)
             btnTable.add(retryButton).width(250f).height(80f).pad(10f)
             btnTable.add(quitBtn).width(250f).height(80f).pad(10f)
             add(btnTable)
@@ -355,6 +361,7 @@ class GameScreen(
         updateScoreBoard()
         resetPusherPositions()
         puckBody?.isActive = false
+        hasPuckTarget = false
         if (playerRole == PlayerRole.PLAYER1) {
             spawnPuckForRequester(PlayerRole.PLAYER1)
         }
@@ -422,12 +429,19 @@ class GameScreen(
     }
 
     override fun show() {
-        Gdx.input.inputProcessor = InputMultiplexer(gestureDetector, hudStage)
+        Gdx.input.inputProcessor = inputMultiplexer
         gameState = GameState.WAITING_FOR_START
         startOverlay.isVisible = true
         resetStartGate()
         resetPusherPositions()
         puckBody?.isActive = false
+        hasPuckTarget = false
+    }
+
+    override fun hide() {
+        if (Gdx.input.inputProcessor === inputMultiplexer) {
+            Gdx.input.inputProcessor = null
+        }
     }
 
     override fun render(delta: Float) {
@@ -457,6 +471,7 @@ class GameScreen(
         val pauseForGoal = goalOverlayTimer > 0f
         if (!pauseForGoal) {
             applyPuckSync()
+            smoothClientPuck(delta)
             sendPuckSync()
             stepWorld(delta)
             checkGoals()
@@ -713,20 +728,47 @@ class GameScreen(
         val vy = if (playerRole == PlayerRole.PLAYER2) -baseVy else baseVy
         body.setLinearVelocity(vx, vy)
         body.isAwake = true
+        puckTargetPos.set(body.position)
+        puckTargetVel.set(body.linearVelocity)
+        hasPuckTarget = true
     }
 
     private fun applyPuckSync() {
         if (gameState != GameState.PLAYING) return
-        if (playerRole == PlayerRole.PLAYER1) return
+        if (playerRole != PlayerRole.PLAYER2) return
         val sync = networkManager.puckSyncSignal.value ?: return
         if (sync.spawnId != lastSpawnId) return
         if (sync.syncId == lastSyncId) return
         lastSyncId = sync.syncId
-        val body = puckBody ?: return
         val y = mirrorWorldY(sync.y)
         val vy = -sync.vy
-        body.setTransform(sync.x, y, 0f)
-        body.setLinearVelocity(sync.vx, vy)
+        puckTargetPos.set(sync.x, y)
+        puckTargetVel.set(sync.vx, vy)
+        hasPuckTarget = true
+    }
+
+    private fun smoothClientPuck(delta: Float) {
+        if (gameState != GameState.PLAYING) return
+        if (playerRole != PlayerRole.PLAYER2) return
+        if (!hasPuckTarget) return
+        val body = puckBody ?: return
+        val pos = body.position
+        val dx = puckTargetPos.x - pos.x
+        val dy = puckTargetPos.y - pos.y
+        val snapDist2 = puckSnapDistanceWorld * puckSnapDistanceWorld
+        if ((dx * dx + dy * dy) > snapDist2) {
+            body.setTransform(puckTargetPos, 0f)
+            body.setLinearVelocity(puckTargetVel)
+        } else {
+            val alpha = MathUtils.clamp(delta * puckLerpSpeed, 0f, 1f)
+            val nextX = MathUtils.lerp(pos.x, puckTargetPos.x, alpha)
+            val nextY = MathUtils.lerp(pos.y, puckTargetPos.y, alpha)
+            val vel = body.linearVelocity
+            val nextVx = MathUtils.lerp(vel.x, puckTargetVel.x, alpha)
+            val nextVy = MathUtils.lerp(vel.y, puckTargetVel.y, alpha)
+            body.setTransform(nextX, nextY, 0f)
+            body.setLinearVelocity(nextVx, nextVy)
+        }
         body.isAwake = true
     }
 
@@ -1297,6 +1339,9 @@ class GameScreen(
     }
 
     override fun dispose() {
+        if (Gdx.input.inputProcessor === inputMultiplexer) {
+            Gdx.input.inputProcessor = null
+        }
         shapeRenderer.dispose()
         spriteBatch.dispose()
         hudStage.dispose()

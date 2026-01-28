@@ -6,6 +6,7 @@ import info.meuse24.airhockey.network.PlayerRole
 import info.meuse24.airhockey.screen.GameScreen
 import info.meuse24.airhockey.screen.LobbyScreen
 import info.meuse24.airhockey.screen.NetworkTestScreen
+import info.meuse24.airhockey.screen.SimpleUi
 
 class AirHockeyGame(
     private val networkManager: P2PNetworkManager
@@ -32,5 +33,20 @@ class AirHockeyGame(
 
     fun goToNetworkTest() {
         setScreen(networkTestScreen)
+    }
+
+    override fun dispose() {
+        val current = screen
+        super.dispose()
+        if (current !== lobbyScreen) {
+            lobbyScreen.dispose()
+        }
+        if (current !== networkTestScreen) {
+            networkTestScreen.dispose()
+        }
+        if (gameScreen != null && current !== gameScreen) {
+            gameScreen?.dispose()
+        }
+        SimpleUi.dispose()
     }
 }

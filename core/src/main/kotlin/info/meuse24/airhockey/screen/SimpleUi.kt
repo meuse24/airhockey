@@ -14,6 +14,16 @@ import com.badlogic.gdx.scenes.scene2d.utils.TextureRegionDrawable
 import com.badlogic.gdx.utils.Disposable
 
 object SimpleUi : Disposable {
+    const val SKIN_FONT_DEFAULT = "default-font"
+    const val SKIN_PIXEL = "pixel"
+    const val SKIN_PANEL = "panel"
+    const val STYLE_DEFAULT = "default"
+    const val STYLE_TITLE = "title"
+    const val STYLE_SMALL = "small"
+    const val STYLE_DANGER = "danger"
+    const val STYLE_SUCCESS = "success"
+    const val STYLE_PEER = "peer"
+
     private var _font: BitmapFont? = null
     private var _pixel: Texture? = null
     private var _skin: Skin? = null
@@ -49,30 +59,30 @@ object SimpleUi : Disposable {
         panelPixmap.dispose()
 
         _skin = Skin().apply {
-            add("default-font", _font)
-            add("pixel", _pixel)
-            add("panel", panelTexture)
+            add(SKIN_FONT_DEFAULT, _font)
+            add(SKIN_PIXEL, _pixel)
+            add(SKIN_PANEL, panelTexture)
 
             // Default Label
             val labelStyle = Label.LabelStyle().apply {
                 font = _font
                 fontColor = Color.WHITE
             }
-            add("default", labelStyle)
+            add(STYLE_DEFAULT, labelStyle)
 
             // Title Label (larger, cyan)
             val titleStyle = Label.LabelStyle().apply {
                 font = _font
                 fontColor = Color(0.3f, 0.8f, 1f, 1f)
             }
-            add("title", titleStyle)
+            add(STYLE_TITLE, titleStyle)
 
             // Small Label (stats)
             val smallStyle = Label.LabelStyle().apply {
                 font = _font
                 fontColor = Color(0.7f, 0.7f, 0.7f, 1f)
             }
-            add("small", smallStyle)
+            add(STYLE_SMALL, smallStyle)
 
             // Primary Button (cyan)
             val buttonStyle = TextButton.TextButtonStyle().apply {
@@ -83,7 +93,7 @@ object SimpleUi : Disposable {
                 over = TextureRegionDrawable(_pixel).tint(Color(0.3f, 0.7f, 1f, 1f))
                 disabled = TextureRegionDrawable(_pixel).tint(Color(0.3f, 0.3f, 0.3f, 1f))
             }
-            add("default", buttonStyle)
+            add(STYLE_DEFAULT, buttonStyle)
 
             // Danger Button (red)
             val dangerButtonStyle = TextButton.TextButtonStyle().apply {
@@ -94,7 +104,7 @@ object SimpleUi : Disposable {
                 over = TextureRegionDrawable(_pixel).tint(Color(0.9f, 0.3f, 0.3f, 1f))
                 disabled = TextureRegionDrawable(_pixel).tint(Color(0.3f, 0.3f, 0.3f, 1f))
             }
-            add("danger", dangerButtonStyle)
+            add(STYLE_DANGER, dangerButtonStyle)
 
             // Success Button (green)
             val successButtonStyle = TextButton.TextButtonStyle().apply {
@@ -105,7 +115,7 @@ object SimpleUi : Disposable {
                 over = TextureRegionDrawable(_pixel).tint(Color(0.3f, 0.9f, 0.4f, 1f))
                 disabled = TextureRegionDrawable(_pixel).tint(Color(0.3f, 0.3f, 0.3f, 1f))
             }
-            add("success", successButtonStyle)
+            add(STYLE_SUCCESS, successButtonStyle)
 
             // Peer Button (light)
             val peerButtonStyle = TextButton.TextButtonStyle().apply {
@@ -115,7 +125,7 @@ object SimpleUi : Disposable {
                 down = TextureRegionDrawable(_pixel).tint(Color(0.1f, 0.1f, 0.15f, 1f))
                 over = TextureRegionDrawable(_pixel).tint(Color(0.2f, 0.5f, 0.8f, 1f))
             }
-            add("peer", peerButtonStyle)
+            add(STYLE_PEER, peerButtonStyle)
 
             // ScrollPane with panel background
             val scrollPaneStyle = ScrollPane.ScrollPaneStyle().apply {
@@ -123,14 +133,14 @@ object SimpleUi : Disposable {
                 vScroll = TextureRegionDrawable(_pixel).tint(Color(0.2f, 0.2f, 0.3f, 1f))
                 vScrollKnob = TextureRegionDrawable(_pixel).tint(Color(0.4f, 0.6f, 0.9f, 1f))
             }
-            add("default", scrollPaneStyle)
+            add(STYLE_DEFAULT, scrollPaneStyle)
         }
     }
 
     override fun dispose() {
         _font?.dispose()
         _pixel?.dispose()
-        _skin?.getDrawable("panel")?.let {
+        _skin?.getDrawable(SKIN_PANEL)?.let {
             if (it is NinePatchDrawable) it.patch.texture.dispose()
         }
         _skin?.dispose()

@@ -23,15 +23,15 @@ class NetworkTestScreen(
     private val networkManager: P2PNetworkManager
 ) : ScreenAdapter() {
     private val stage = Stage(ScreenViewport())
-    private val statusLabel = Label("IDLE", SimpleUi.skin, "title")
-    private val errorLabel = Label("", SimpleUi.skin, "small")
-    private val startStatusLabel = Label("", SimpleUi.skin, "small")
+    private val statusLabel = Label("IDLE", SimpleUi.skin, SimpleUi.STYLE_TITLE)
+    private val errorLabel = Label("", SimpleUi.skin, SimpleUi.STYLE_SMALL)
+    private val startStatusLabel = Label("", SimpleUi.skin, SimpleUi.STYLE_SMALL)
     private val rttLabel = Label("", SimpleUi.skin)
-    private val trafficLabel = Label("", SimpleUi.skin, "small")
-    private val packetsLabel = Label("", SimpleUi.skin, "small")
-    private val criticalLabel = Label("", SimpleUi.skin, "small")
-    private val backButton = TextButton("Back", SimpleUi.skin, "danger")
-    private val disconnectButton = TextButton("Disconnect", SimpleUi.skin, "danger")
+    private val trafficLabel = Label("", SimpleUi.skin, SimpleUi.STYLE_SMALL)
+    private val packetsLabel = Label("", SimpleUi.skin, SimpleUi.STYLE_SMALL)
+    private val criticalLabel = Label("", SimpleUi.skin, SimpleUi.STYLE_SMALL)
+    private val backButton = TextButton("Back", SimpleUi.skin, SimpleUi.STYLE_DANGER)
+    private val disconnectButton = TextButton("Disconnect", SimpleUi.skin, SimpleUi.STYLE_DANGER)
     private val criticalButton = TextButton("Test Critical Event", SimpleUi.skin)
 
     private var lastBytesTotal = 0L
@@ -63,7 +63,7 @@ class NetworkTestScreen(
         })
 
         val panelDrawable = NinePatchDrawable(
-            NinePatch(SimpleUi.skin.get("panel", com.badlogic.gdx.graphics.Texture::class.java), 2, 2, 2, 2)
+            NinePatch(SimpleUi.skin.get(SimpleUi.SKIN_PANEL, com.badlogic.gdx.graphics.Texture::class.java), 2, 2, 2, 2)
         )
 
         val root = Table().apply {
@@ -71,12 +71,12 @@ class NetworkTestScreen(
             pad(20f)
             defaults().space(16f)
 
-            add(Label("NETWORK TEST", SimpleUi.skin, "title")).colspan(2).center().padBottom(10f).row()
+            add(Label("NETWORK TEST", SimpleUi.skin, SimpleUi.STYLE_TITLE)).colspan(2).center().padBottom(10f).row()
 
             val statusPanel = Table().apply {
                 background = panelDrawable
                 pad(20f)
-                add(Label("CONNECTION", SimpleUi.skin, "small")).center().row()
+                add(Label("CONNECTION", SimpleUi.skin, SimpleUi.STYLE_SMALL)).center().row()
                 add(statusLabel).center().padTop(10f).row()
             }
             add(statusPanel).colspan(2).fillX().height(120f).row()
@@ -108,6 +108,12 @@ class NetworkTestScreen(
 
     override fun show() {
         Gdx.input.inputProcessor = stage
+    }
+
+    override fun hide() {
+        if (Gdx.input.inputProcessor === stage) {
+            Gdx.input.inputProcessor = null
+        }
     }
 
     override fun render(delta: Float) {
@@ -208,6 +214,9 @@ class NetworkTestScreen(
     }
 
     override fun dispose() {
+        if (Gdx.input.inputProcessor === stage) {
+            Gdx.input.inputProcessor = null
+        }
         stage.dispose()
     }
 }

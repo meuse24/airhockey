@@ -100,24 +100,24 @@ class WifiDirectManager(
     private var currentIsHost: Boolean = false
 
     override fun initialize() {
-        android.util.Log.d("WifiDirectManager", "initialize() called")
+        NetworkLog.d("WifiDirectManager", "initialize() called")
         registerReceiver()
         if (hasP2pPermissions()) {
-            android.util.Log.d("WifiDirectManager", "Has P2P permissions, removing group")
+            NetworkLog.d("WifiDirectManager", "Has P2P permissions, removing group")
             try {
                 p2pManager.removeGroup(channel, null)
             } catch (e: Throwable) {
                 _lastError.value = "Remove group failed: ${e.javaClass.simpleName}"
-                android.util.Log.w("WifiDirectManager", "removeGroup failed", e)
+                NetworkLog.w("WifiDirectManager", "removeGroup failed", e)
             }
             // Auto-start discovery after initialization
             scope.launch {
                 delay(500)
-                android.util.Log.d("WifiDirectManager", "Auto-starting peer discovery")
+                NetworkLog.d("WifiDirectManager", "Auto-starting peer discovery")
                 discoverPeers()
             }
         } else {
-            android.util.Log.e("WifiDirectManager", "Missing P2P permissions!")
+            NetworkLog.e("WifiDirectManager", "Missing P2P permissions!")
             _state.value = NetworkState.ERROR
             _lastError.value = "Missing Wi-Fi Direct permissions"
         }
@@ -131,29 +131,46 @@ class WifiDirectManager(
 
     @SuppressLint("MissingPermission")
     override fun discoverPeers() {
-        android.util.Log.d("WifiDirectManager", "discoverPeers() called")
+        NetworkLog.d("WifiDirectManager", "discoverPeers() called")
         if (!hasP2pPermissions()) {
-            android.util.Log.e("WifiDirectManager", "Missing permissions for peer discovery")
+            NetworkLog.e("WifiDirectManager", "Missing permissions for peer discovery")
             _state.value = NetworkState.ERROR
             _lastError.value = "Missing Wi-Fi Direct permissions"
             return
         }
         if (_state.value == NetworkState.CONNECTING) {
-            android.util.Log.w("WifiDirectManager", "Already connecting, skipping discovery")
+            NetworkLog.w("WifiDirectManager", "Already connecting, skipping discovery")
             return
         }
         _state.value = NetworkState.SCANNING
         _lastError.value = null
-        android.util.Log.d("WifiDirectManager", "Starting Wi-Fi P2P peer discovery")
+        NetworkLog.d("WifiDirectManager", "Starting Wi-Fi P2P peer discovery")
         p2pManager.discoverPeers(channel, object : WifiP2pManager.ActionListener {
             override fun onSuccess() {
-                android.util.Log.d("WifiDirectManager", "Peer discovery started successfully")
+                NetworkLog.d("WifiDirectManager", "Peer discovery started successfully")
                 _lastError.value = null
             }
             override fun onFailure(reason: Int) {
-                android.util.Log.e("WifiDirectManager", "Peer discovery failed with reason: $reason")
+                NetworkLog.e("WifiDirectManager", "Peer discovery failed with reason: $reason")
                 _state.value = NetworkState.ERROR
                 _lastError.value = "Discover peers failed: $reason (Wi-Fi on? Location enabled?)"
+            }
+        })
+    }
+
+    @SuppressLint("MissingPermission")
+    override fun stopPeerDiscovery() {
+        NetworkLog.d("WifiDirectManager", "stopPeerDiscovery() called")
+        if (!hasP2pPermissions()) {
+            NetworkLog.w("WifiDirectManager", "Missing permissions, cannot stop discovery")
+            return
+        }
+        p2pManager.stopPeerDiscovery(channel, object : WifiP2pManager.ActionListener {
+            override fun onSuccess() {
+                NetworkLog.d("WifiDirectManager", "Peer discovery stopped successfully")
+            }
+            override fun onFailure(reason: Int) {
+                NetworkLog.w("WifiDirectManager", "Failed to stop peer discovery: $reason")
             }
         })
     }
@@ -240,7 +257,7 @@ class WifiDirectManager(
         stopTransport()
         currentIsHost = isHost
         _playerRole.value = if (isHost) PlayerRole.PLAYER1 else PlayerRole.PLAYER2
-        android.util.Log.d("WifiDirectManager", "Role assigned: ${_playerRole.value}")
+        NetworkLog.d("WifiDirectManager", "Role assigned: ${_playerRole.value}")
         _roleVerified.value = false
         pendingRoleHandshakeId = null
         _connectedPeer.value = null
@@ -330,21 +347,21 @@ class WifiDirectManager(
                         val state = intent.getIntExtra(WifiP2pManager.EXTRA_WIFI_STATE, -1)
                         when (state) {
                             WifiP2pManager.WIFI_P2P_STATE_ENABLED -> {
-                                android.util.Log.d("WifiDirectManager", "Wi-Fi P2P is enabled")
+                                NetworkLog.d("WifiDirectManager", "Wi-Fi P2P is enabled")
                             }
                             WifiP2pManager.WIFI_P2P_STATE_DISABLED -> {
-                                android.util.Log.e("WifiDirectManager", "Wi-Fi P2P is disabled")
+                                NetworkLog.e("WifiDirectManager", "Wi-Fi P2P is disabled")
                                 _lastError.value = "Wi-Fi P2P is disabled. Please enable Wi-Fi."
                             }
                         }
                     }
                     WifiP2pManager.WIFI_P2P_PEERS_CHANGED_ACTION -> {
-                        android.util.Log.d("WifiDirectManager", "Peers changed, requesting peer list")
+                        NetworkLog.d("WifiDirectManager", "Peers changed, requesting peer list")
                         p2pManager.requestPeers(channel) { peersList ->
                             val peers = peersList.deviceList.map {
                                 PeerDevice(it.deviceName ?: "Unknown", it.deviceAddress)
                             }
-                            android.util.Log.d("WifiDirectManager", "Found ${peers.size} peers: $peers")
+                            NetworkLog.d("WifiDirectManager", "Found ${peers.size} peers: $peers")
                             _peers.value = peers
                         }
                     }
@@ -454,7 +471,7 @@ class WifiDirectManager(
                 }
                 _roleVerified.value = true
                 roleTimeoutJob?.cancel()
-                android.util.Log.d("WifiDirectManager", "Role verified (host)")
+                NetworkLog.d("WifiDirectManager", "Role verified (host)")
                 udpTransport?.sendCriticalEvent(
                     RoleProtocol.buildRoleConfirmed(rolePayload.handshakeId, role)
                 )
@@ -470,7 +487,7 @@ class WifiDirectManager(
                 }
                 _roleVerified.value = true
                 roleTimeoutJob?.cancel()
-                android.util.Log.d("WifiDirectManager", "Role verified (client)")
+                NetworkLog.d("WifiDirectManager", "Role verified (client)")
             }
             GameSignalProtocol.TYPE_START_GAME -> {
                 emitStartGame()
@@ -514,7 +531,7 @@ class WifiDirectManager(
             delay(5000)
             if (!_roleVerified.value) {
                 _lastError.value = "Role sync timeout"
-                android.util.Log.w("WifiDirectManager", "Role sync timeout")
+                NetworkLog.w("WifiDirectManager", "Role sync timeout")
             }
         }
     }

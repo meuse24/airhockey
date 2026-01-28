@@ -33,6 +33,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":android-network"))
     implementation(project(":core"))
     implementation(libs.gdx.backend.android)
     implementation(libs.gdx.core)

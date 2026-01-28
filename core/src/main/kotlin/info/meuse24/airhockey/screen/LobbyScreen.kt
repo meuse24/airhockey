@@ -23,11 +23,11 @@ class LobbyScreen(
     private val peerTable = Table()
     private val peerScroll = ScrollPane(peerTable, SimpleUi.skin)
     private val searchButton = TextButton("Search Players", SimpleUi.skin)
-    private val startButton = TextButton("Start Game", SimpleUi.skin, "success")
+    private val startButton = TextButton("Start Game", SimpleUi.skin, SimpleUi.STYLE_SUCCESS)
     private val networkTestButton = TextButton("Network Test", SimpleUi.skin)
-    private val titleLabel = Label("AIR HOCKEY P2P", SimpleUi.skin, "title")
-    private val availableLabel = Label("Available Players", SimpleUi.skin, "small")
-    private val selectHintLabel = Label("Select a player to connect", SimpleUi.skin, "small")
+    private val titleLabel = Label("AIR HOCKEY P2P", SimpleUi.skin, SimpleUi.STYLE_TITLE)
+    private val availableLabel = Label("Available Players", SimpleUi.skin, SimpleUi.STYLE_SMALL)
+    private val selectHintLabel = Label("Select a player to connect", SimpleUi.skin, SimpleUi.STYLE_SMALL)
 
     private var lastPeerHash = 0
     private var lastRole: PlayerRole? = null
@@ -83,6 +83,12 @@ class LobbyScreen(
         Gdx.input.inputProcessor = stage
     }
 
+    override fun hide() {
+        if (Gdx.input.inputProcessor === stage) {
+            Gdx.input.inputProcessor = null
+        }
+    }
+
     override fun render(delta: Float) {
         updateUi()
         stage.act(delta)
@@ -126,7 +132,7 @@ class LobbyScreen(
             lastConnectedPeerAddress = connectedPeerAddress
             peerTable.clearChildren()
             if (peers.isEmpty()) {
-                peerTable.add(Label("No players found", SimpleUi.skin, "small")).center().padTop(20f).row()
+                peerTable.add(Label("No players found", SimpleUi.skin, SimpleUi.STYLE_SMALL)).center().padTop(20f).row()
                 selectHintLabel.isVisible = false
             } else {
                 selectHintLabel.isVisible = true
@@ -142,7 +148,7 @@ class LobbyScreen(
                     } else {
                         peer.name
                     }
-                    val button = TextButton(label, SimpleUi.skin, "peer")
+                    val button = TextButton(label, SimpleUi.skin, SimpleUi.STYLE_PEER)
                     button.label.setEllipsis(true)
                     button.addListener(object : ClickListener() {
                         override fun clicked(event: InputEvent?, x: Float, y: Float) {
@@ -161,6 +167,9 @@ class LobbyScreen(
     }
 
     override fun dispose() {
+        if (Gdx.input.inputProcessor === stage) {
+            Gdx.input.inputProcessor = null
+        }
         stage.dispose()
     }
 }

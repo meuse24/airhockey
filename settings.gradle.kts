@@ -21,5 +21,6 @@ dependencyResolutionManagement {
 
 rootProject.name = "AirHockey"
 include(":app")
+include(":android-network")
 include(":core")
 include(":gdx-android")

@@ -2,7 +2,6 @@ package info.meuse24.airhockey
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.net.wifi.p2p.WifiP2pDevice
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -25,8 +24,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.viewmodel.compose.viewModel
-import info.meuse24.airhockey.network.ConnectionState
-import info.meuse24.airhockey.network.P2PNetworkManager
+import info.meuse24.airhockey.network.NetworkState
+import info.meuse24.airhockey.network.PeerDevice
 import info.meuse24.airhockey.ui.theme.AirHockeyTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -57,19 +56,13 @@ fun MainScreen(viewModel: NetworkViewModel, modifier: Modifier = Modifier) {
     val networkManager = viewModel.networkManager
     val scrollState = rememberScrollState()
     
-    val connectionState by networkManager.connectionState.collectAsState()
-    val connectedDeviceName by networkManager.connectedDeviceName.collectAsState()
-    val rtt by networkManager.latestPingRtt.collectAsState()
+    val state by networkManager.state.collectAsState()
+    val connectedPeer by networkManager.connectedPeer.collectAsState()
+    val stats by networkManager.stats.collectAsState()
     val peers by networkManager.peers.collectAsState()
     val lastError by networkManager.lastError.collectAsState()
-    val bytesSent by networkManager.bytesSent.collectAsState()
-    val bytesRecv by networkManager.bytesReceived.collectAsState()
-    val packetsSent by networkManager.packetsSent.collectAsState()
-    val packetsRecv by networkManager.packetsReceived.collectAsState()
-    val oversizeDropped by networkManager.oversizePacketsDropped.collectAsState()
-    val lastAckedEventId by networkManager.lastAckedEventId.collectAsState()
-    val lastReceivedCriticalEventId by networkManager.lastReceivedCriticalEventId.collectAsState()
-    val pendingCriticalCount by networkManager.pendingCriticalCount.collectAsState()
+    val roleVerified by networkManager.roleVerified.collectAsState()
+    val playerRole by networkManager.playerRole.collectAsState()
     
     val isTransmissionActive = viewModel.isTransmissionActive
 
@@ -79,26 +72,49 @@ fun MainScreen(viewModel: NetworkViewModel, modifier: Modifier = Modifier) {
         arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION)
     }
 
+    var permissionsGranted by remember { mutableStateOf(false) }
+    var initialized by remember { mutableStateOf(false) }
+
     val launcher = rememberLauncherForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { perms ->
-        if (perms.values.all { it }) networkManager.discoverPeers()
-        else Toast.makeText(context, "Permissions missing!", Toast.LENGTH_SHORT).show()
+        permissionsGranted = perms.values.all { it }
+        if (!permissionsGranted) {
+            Toast.makeText(context, "Permissions missing!", Toast.LENGTH_SHORT).show()
+        }
     }
     
     LaunchedEffect(Unit) {
-        if (!permissionsToRequest.all { ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED }) {
+        permissionsGranted = permissionsToRequest.all {
+            ContextCompat.checkSelfPermission(context, it) == PackageManager.PERMISSION_GRANTED
+        }
+        if (!permissionsGranted) {
             launcher.launch(permissionsToRequest)
         }
     }
 
-    LaunchedEffect(connectionState, isTransmissionActive) {
-        if (connectionState == ConnectionState.IDLE || connectionState == ConnectionState.DISCONNECTED) {
-            networkManager.discoverPeers()
+    LaunchedEffect(permissionsGranted) {
+        if (permissionsGranted && !initialized) {
+            networkManager.initialize()
+            initialized = true
+        }
+    }
+
+    LaunchedEffect(state, isTransmissionActive, permissionsGranted) {
+        if (!permissionsGranted) return@LaunchedEffect
+
+        when (state) {
+            NetworkState.IDLE, NetworkState.DISCONNECTED -> {
+                networkManager.discoverPeers()
+            }
+            NetworkState.CONNECTED_HOST, NetworkState.CONNECTED_CLIENT -> {
+                networkManager.stopPeerDiscovery()
+            }
+            else -> { /* Do nothing for SCANNING, CONNECTING, ERROR states */ }
         }
 
-        if (isTransmissionActive && (connectionState == ConnectionState.CONNECTED_HOST || connectionState == ConnectionState.CONNECTED_CLIENT)) {
+        if (isTransmissionActive && (state == NetworkState.CONNECTED_HOST || state == NetworkState.CONNECTED_CLIENT)) {
             while (isActive) {
                 networkManager.sendGameData(kotlin.random.Random.nextBytes(64))
-                kotlinx.coroutines.delay(16)
+                delay(16)
             }
         }
     }
@@ -109,42 +125,45 @@ fun MainScreen(viewModel: NetworkViewModel, modifier: Modifier = Modifier) {
             .fillMaxSize()
             .verticalScroll(scrollState)
     ) {
-        Text("Status: $connectionState", style = MaterialTheme.typography.headlineSmall)
+        Text("Status: $state", style = MaterialTheme.typography.headlineSmall)
         if (lastError != null) {
             Spacer(modifier = Modifier.height(8.dp))
             Text("Error: $lastError", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.error)
         }
         Spacer(modifier = Modifier.height(16.dp))
 
-        if (connectionState == ConnectionState.CONNECTED_HOST || connectionState == ConnectionState.CONNECTED_CLIENT) {
+        if (state == NetworkState.CONNECTED_HOST || state == NetworkState.CONNECTED_CLIENT) {
             Card(
                 modifier = Modifier.fillMaxWidth(),
                 elevation = CardDefaults.cardElevation(defaultElevation = 4.dp),
                 colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.primaryContainer)
             ) {
                 Column(modifier = Modifier.padding(16.dp)) {
-                    Text("Connected to: ${connectedDeviceName ?: "Unknown"}", style = MaterialTheme.typography.titleLarge)
-                    Text("Ping RTT: ${rtt}ms", style = MaterialTheme.typography.bodyLarge)
+                    val connectedName = connectedPeer?.name ?: connectedPeer?.address ?: "Unknown"
+                    Text("Connected to: $connectedName", style = MaterialTheme.typography.titleLarge)
+                    Text("Ping RTT: ${stats.rttMs}ms", style = MaterialTheme.typography.bodyLarge)
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f))
-                    
+
                     Row(modifier = Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                          Column {
                              Text("Sent", style = MaterialTheme.typography.titleMedium)
-                             Text("Bytes: ${formatBytes(bytesSent)}", style = MaterialTheme.typography.bodyMedium)
-                             Text("Packets: $packetsSent", style = MaterialTheme.typography.bodyMedium)
+                             Text("Bytes: ${formatBytes(stats.bytesSent)}", style = MaterialTheme.typography.bodyMedium)
+                             Text("Packets: ${stats.packetsSent}", style = MaterialTheme.typography.bodyMedium)
                          }
                          Column {
                              Text("Received", style = MaterialTheme.typography.titleMedium)
-                             Text("Bytes: ${formatBytes(bytesRecv)}", style = MaterialTheme.typography.bodyMedium)
-                             Text("Packets: $packetsRecv", style = MaterialTheme.typography.bodyMedium)
+                             Text("Bytes: ${formatBytes(stats.bytesReceived)}", style = MaterialTheme.typography.bodyMedium)
+                             Text("Packets: ${stats.packetsReceived}", style = MaterialTheme.typography.bodyMedium)
                          }
                     }
                     HorizontalDivider(modifier = Modifier.padding(vertical = 8.dp), color = MaterialTheme.colorScheme.onPrimaryContainer.copy(alpha = 0.2f))
-                    Text("Total Traffic: ${formatBytes(bytesSent + bytesRecv)}", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
-                    Text("Oversize drops: $oversizeDropped", style = MaterialTheme.typography.bodyMedium)
-                    Text("Last acked event: ${lastAckedEventId ?: "-"}", style = MaterialTheme.typography.bodyMedium)
-                    Text("Last received event: ${lastReceivedCriticalEventId ?: "-"}", style = MaterialTheme.typography.bodyMedium)
-                    Text("Pending critical: $pendingCriticalCount", style = MaterialTheme.typography.bodyMedium)
+                    Text("Total Traffic: ${formatBytes(stats.bytesSent + stats.bytesReceived)}", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.primary)
+                    Text("Dropped packets: ${stats.droppedPackets}", style = MaterialTheme.typography.bodyMedium)
+                    Text("Oversize drops: ${stats.oversizeDropped}", style = MaterialTheme.typography.bodyMedium)
+                    Text("Last acked event: ${stats.lastAckedEventId ?: "-"}", style = MaterialTheme.typography.bodyMedium)
+                    Text("Last received event: ${stats.lastReceivedCriticalEventId ?: "-"}", style = MaterialTheme.typography.bodyMedium)
+                    Text("Pending critical: ${stats.pendingCriticalCount}", style = MaterialTheme.typography.bodyMedium)
+                    Text("Role: ${playerRole ?: "-"} (verified: $roleVerified)", style = MaterialTheme.typography.bodyMedium)
                     
                     Spacer(modifier = Modifier.height(16.dp))
                     
@@ -177,7 +196,7 @@ fun MainScreen(viewModel: NetworkViewModel, modifier: Modifier = Modifier) {
                 Text("Disconnect")
             }
         } else {
-            Button(onClick = { networkManager.discoverPeers() }, enabled = connectionState == ConnectionState.IDLE || connectionState == ConnectionState.DISCONNECTED || connectionState == ConnectionState.ERROR) {
+            Button(onClick = { networkManager.discoverPeers() }, enabled = state == NetworkState.IDLE || state == NetworkState.DISCONNECTED || state == NetworkState.ERROR) {
                 Text("Search for Peers")
             }
             Spacer(modifier = Modifier.height(16.dp))
@@ -202,19 +221,13 @@ fun MainScreen(viewModel: NetworkViewModel, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun PeerItem(device: WifiP2pDevice, onClick: () -> Unit) {
+fun PeerItem(device: PeerDevice, onClick: () -> Unit) {
     Card(modifier = Modifier.fillMaxWidth().padding(8.dp).clickable { onClick() }, elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)) {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(text = device.deviceName ?: "Unknown Device", style = MaterialTheme.typography.bodyLarge)
-            Text(text = device.deviceAddress, style = MaterialTheme.typography.bodySmall)
-            Text(text = "Status: ${getDeviceStatus(device.status)}", style = MaterialTheme.typography.labelSmall)
+            Text(text = device.name.ifBlank { "Unknown Device" }, style = MaterialTheme.typography.bodyLarge)
+            Text(text = device.address, style = MaterialTheme.typography.bodySmall)
         }
     }
-}
-
-fun getDeviceStatus(status: Int): String = when (status) {
-    WifiP2pDevice.AVAILABLE -> "Available"; WifiP2pDevice.INVITED -> "Invited"; WifiP2pDevice.CONNECTED -> "Connected"
-    WifiP2pDevice.FAILED -> "Failed"; WifiP2pDevice.UNAVAILABLE -> "Unavailable"; else -> "Unknown"
 }
 
 fun formatBytes(bytes: Long): String = when {

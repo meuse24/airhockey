@@ -8,16 +8,14 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.lifecycle.AndroidViewModel
 import info.meuse24.airhockey.network.P2PNetworkManager
-import info.meuse24.airhockey.network.WifiDirectNetworkManager
+import info.meuse24.airhockey.network.WifiDirectManager
 
 class NetworkViewModel(application: Application) : AndroidViewModel(application) {
 
     val networkManager: P2PNetworkManager by lazy {
         val p2pManager = application.getSystemService(Context.WIFI_P2P_SERVICE) as WifiP2pManager
         val channel = p2pManager.initialize(application, application.mainLooper, null)
-        WifiDirectNetworkManager(application, p2pManager, channel).apply {
-            initialize()
-        }
+        WifiDirectManager(application, p2pManager, channel)
     }
 
     var isTransmissionActive by mutableStateOf(true)
