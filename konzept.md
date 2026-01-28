@@ -1,14 +1,14 @@
 # Android-Spiel – Konzeptcanvas
 
 ## 1. Grundidee (High Concept)
-Ein ultraschnelles Echtzeit-Duell, bei dem zwei Smartphones über Wi-Fi Direct ein unsichtbares Spielfeld aufspannen und ohne Internet-Lag direkt gegeneinander antreten.
+Ein minimalistisches Pong-Duell im Stil von Atari 1972, bei dem zwei Smartphones über Wi-Fi Direct ein gemeinsames Spielfeld teilen und ohne Internet-Lag gegeneinander antreten.
 
-- Arbeitstitel: **AirHockey P2P**
+- Arbeitstitel: **Pong P2P**
 - Genre: **2D Arcade / Multiplayer**
 - Plattform: **Android (API 29+)**
-- Zielgefühl: **schnell, reaktionsstark, kompetitiv**
-- Ausrichtung: **Portrait (Hochkant) mit dynamischem Landscape-Support**
-- High Concept: **Zwei Spieler spielen klassisches Airhockey auf ihren eigenen Smartphones. Peer-to-Peer-Verbindung sorgt für minimale Latenz.**
+- Zielgefühl: **retro, klar, reaktionsstark, kompetitiv**
+- Ausrichtung: **Portrait (Hochkant)**
+- High Concept: **Zwei Spieler spielen klassisches Pong (vertikal) auf ihren eigenen Smartphones. Paddles sitzen an der Grundlinie, der Puck ist eine weiße Scheibe, die komplette Grundlinie ist offen. Peer-to-Peer-Verbindung sorgt für minimale Latenz.**
 
 ---
 
@@ -22,9 +22,9 @@ Ein ultraschnelles Echtzeit-Duell, bei dem zwei Smartphones über Wi-Fi Direct e
 ## 3. Core Gameplay Loop
 1. **P2P-Verbindung herstellen** (Discovery & Handshake)
 2. **Match starten** – beide Spieler bestätigen Start (Ready-Handshake)
-3. **Pusher steuern**, Puk abwehren und angreifen
-4. **7-Sekunden-Regel:** Puk darf nur begrenzte Zeit im eigenen Feld bleiben
-5. **Tor / Punkt** → Reset
+3. **Paddle an der Grundlinie steuern**, Puck zurückspielen
+4. **Punkt:** Puck überquert die gegnerische Grundlinie (komplett offen)
+5. **Reset/Serve** → Ball in die Mitte, Richtung randomisiert
 6. **Matchende (Best of 5)** → Rematch oder Disconnect
 
 ---
@@ -37,11 +37,11 @@ Ein ultraschnelles Echtzeit-Duell, bei dem zwei Smartphones über Wi-Fi Direct e
 - **Rollen-Handshake**: Host = PLAYER1, Client = PLAYER2, verifizierter Handshake vor Spielstart
 - **Start-Game-Sync**: Beide Spieler bestätigen Start/Retry; Match beginnt erst bei beidseitiger Bestätigung
 - **HUD**: Anzeige der eigenen Rolle (PLAYER 1 / PLAYER 2), Netzwerkstatus, Score
-- **Puck Physics (Box2D)**: Vollständige Puck-Simulation mit Dynamic Body
+- **Puck Physics (Box2D)**: Vollständige Puck-Simulation mit Dynamic Body (weiße Scheibe)
 - **Puck-Sync (Host → Client)**: Host sendet regelmäßige Positions-/Velocity-Updates (alle 100ms)
 - **Client-Side Smoothing**: Linear Interpolation (LERP) für flüssige Puck-Bewegung beim Client
-- **Scoring (Best of 5)**: Tor-Overlay (3s) + Game-Over-Overlay mit Retry/Quit
-- **Synthetisches Audio**: Realtime-PCM-Beep-Sounds für Wand, Pusher und Tor
+- **Scoring (Best of 5)**: Punkt-Overlay (3s) + Game-Over-Overlay mit Retry/Quit
+- **Audio**: Kollisionen (Wand/Paddle), Punkt-Sound
 - **Rückkehr-Sync**: „Back"-Signal wird an beide Geräte verteilt (Lobby-Wechsel)
 - **Resource-Optimierung**: Peer Discovery stoppt automatisch bei aktiver Verbindung (Batterieschonung)
 
@@ -107,30 +107,30 @@ AirHockey (Root)
 **Game Signals (Critical Events):**
 - **ROLE_REQUEST / ROLE_ASSIGN / ROLE_CONFIRM / ROLE_CONFIRMED**: Verifizierter Rollen-Handshake (Host=PLAYER1, Client=PLAYER2).
 - **START_GAME**: Ready-Signal (Start/Retry) – Match beginnt erst bei beidseitiger Bestätigung.
-- **PUCK_REQUEST / PUCK_SPAWN**: Host-Authoritative Puck-Spawn mit Winkel + Geschwindigkeit.
+- **PUCK_REQUEST / PUCK_SPAWN**: Host-Authoritative Serve (Mitte, Winkel + Geschwindigkeit).
 - **PUCK_SYNC**: Host sendet regelmäßige Position + Velocity Updates (Game Data Channel).
-- **PUSHER_SYNC**: Spieler senden ihre Pusher-Positionen (alle 25ms).
-- **GOAL_SCORED**: Tor-Event + synchroner Score-Abgleich.
+- **PADDLE_SYNC**: Spieler senden ihre Paddle-Positionen (alle 25ms).
+- **GOAL_SCORED**: Punkt-Event (Baseline-Out) + synchroner Score-Abgleich.
 - **RETURN_TO_LOBBY**: Synchroner Rücksprung in die Lobby.
 
 ### Physik (Production-Ready Implementation)
 - **Box2D World** im `GameScreen` (0-G-Topdown).
 - **Fixed Time Step** (1/60s) mit Accumulator, Begrenzung auf max 5 Steps/Frame.
 - **Puck Body**: DynamicBody (CircleShape), hohe Restitution, geringe Dämpfung.
-- **Pusher Bodies**: Kinematic Bodies (lokaler + Remote-Pusher), Touch-gesteuert.
-- **Walls**: Statische Edges mit Tor-Öffnungen + Goal-Sensoren hinter der Torlinie.
-- **Collision Detection**: ContactListener für Wall-Hits, Pusher-Hits, Goal-Detection.
+- **Paddle Bodies**: Kinematic Bodies (lokal + remote), Touch-gesteuert entlang der Grundlinie.
+- **Walls**: Nur Seitenwände; obere/untere Grundlinie ist offen.
+- **Goal Detection**: Out-of-bounds (Baseline-Out) statt Goal-Sensoren.
 
 **Host-Authoritative Synchronisation:**
 - **Host (PLAYER1)**: Berechnet vollständige Physik-Simulation
   - Sendet Puck-Syncs alle 100ms (Position + Velocity)
-  - Empfängt Pusher-Position vom Client
-  - Autoritativ für Tor-Erkennung und Scoring
+  - Empfängt Paddle-Position vom Client
+  - Autoritativ für Baseline-Out-Erkennung und Scoring
 - **Client (PLAYER2)**: Empfängt Puck-State vom Host
   - **Linear Interpolation (LERP)**: Smooth Bewegung zwischen Updates
   - **Snap-Distance**: Bei großen Abweichungen (>0.25f) sofortiger Snap zur Target-Position
   - **Velocity Smoothing**: Auch Geschwindigkeit wird interpoliert für natürliche Beschleunigung
-  - Sendet eigene Pusher-Position alle 25ms
+  - Sendet eigene Paddle-Position alle 25ms
 
 **Client-Side Smoothing (Implementiert):**
 ```kotlin
@@ -162,7 +162,7 @@ private fun smoothClientPuck(delta: Float) {
 - Physik arbeitet in einer festen World-Größe (1.0 x 2.0 Meter)
 - Rendering skaliert per PPM (Pixels Per Meter) pro Gerät
 - Konsistentes Abprallverhalten auf unterschiedlichen Auflösungen
-- Jeder Spieler sieht sein eigenes Tor unten (Feld wird für PLAYER2 gespiegelt)
+- Jeder Spieler sieht seine Grundlinie unten (Feld wird für PLAYER2 gespiegelt)
 
 **Game States & Flow:**
 - **WAITING_FOR_START**: Start-Overlay mit Ready-Handshake
@@ -171,9 +171,8 @@ private fun smoothClientPuck(delta: Float) {
 - **GAME_OVER**: Best-of-5 erreicht, Overlay mit Retry/Quit
 
 **Input & Controls:**
-- Touch/Drag für Pusher-Steuerung
-- GestureDetector für Pan-Events
-- Pusher folgt Touch-Position mit Physik-Constraints (bleibt in eigener Hälfte)
+- Touch/Drag für Paddle-Steuerung
+- Paddle folgt Touch-X entlang der Grundlinie (Y fixiert)
 - Back/ESC kehrt zur Lobby zurück (sendet Sync-Signal an beide Geräte)
 
 **Audio System:**
@@ -192,7 +191,7 @@ private fun smoothClientPuck(delta: Float) {
 ---
 
 ## 9. USP – Warum dieses Spiel?
-- **Echtes 2‑Player Airhockey auf zwei Geräten** (jeder hat sein eigenes Smartphone als Controller/Anzeige).
+- **Echtes 2‑Player Pong auf zwei Geräten** (jeder hat sein eigenes Smartphone als Controller/Anzeige).
 - **Production-Grade Network Stack**: Ultra-robuste UDP-Verbindung mit LERP-Interpolation für flüssiges Gameplay.
 - **Zero Configuration**: App öffnen → Suchen → Spielen. Kein Account, kein Internet nötig.
 - **Enterprise-Level Code Quality**: Keine Memory Leaks, saubere Architektur, optimierte Resource-Nutzung.
@@ -607,4 +606,4 @@ Das Projekt hat sich von einem Proof-of-Concept zu einer robusten, production-re
 - ✅ Umfassendes Error-Handling und State-Management
 - ✅ Production-grade Netzwerk-Stack mit Reliability-Layer
 
-Die verbleibenden "offenen" Punkte sind entweder bereits implementiert, nicht sinnvoll, oder Nice-to-have Features mit niedrigem Impact. Das Spiel ist bereit für den produktiven Einsatz! 🎮
+Jetzt als minimalistisches, vertikales Pong im Atari-1972-Stil: offene Grundlinien, einfache Paddles, weißer Puck – bereit für schnelle Duelle. 🎮

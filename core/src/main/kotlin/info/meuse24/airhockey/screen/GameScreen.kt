@@ -9,7 +9,6 @@ import com.badlogic.gdx.graphics.g2d.BitmapFont
 import com.badlogic.gdx.graphics.g2d.GlyphLayout
 import com.badlogic.gdx.graphics.g2d.SpriteBatch
 import com.badlogic.gdx.graphics.glutils.ShapeRenderer
-import com.badlogic.gdx.files.FileHandle
 import com.badlogic.gdx.input.GestureDetector
 import com.badlogic.gdx.InputMultiplexer
 import com.badlogic.gdx.math.MathUtils
@@ -17,13 +16,8 @@ import com.badlogic.gdx.math.Vector2
 import com.badlogic.gdx.physics.box2d.Body
 import com.badlogic.gdx.physics.box2d.BodyDef
 import com.badlogic.gdx.physics.box2d.Box2D
-import com.badlogic.gdx.physics.box2d.ChainShape
 import com.badlogic.gdx.physics.box2d.CircleShape
-import com.badlogic.gdx.physics.box2d.Contact
-import com.badlogic.gdx.physics.box2d.ContactImpulse
-import com.badlogic.gdx.physics.box2d.ContactListener
 import com.badlogic.gdx.physics.box2d.FixtureDef
-import com.badlogic.gdx.physics.box2d.Manifold
 import com.badlogic.gdx.physics.box2d.World
 import com.badlogic.gdx.scenes.scene2d.Stage
 import com.badlogic.gdx.scenes.scene2d.ui.Image
@@ -63,9 +57,9 @@ class GameScreen(
     private val viewport = ScreenViewport()
     private val hudStage = Stage(viewport)
     private val roleLabel = Label("", SimpleUi.skin, SimpleUi.STYLE_TITLE)
-    private val hintLabel = Label("Tap Spawn to place puck", SimpleUi.skin, SimpleUi.STYLE_SMALL)
+    private val hintLabel = Label("Tap Serve to launch puck", SimpleUi.skin, SimpleUi.STYLE_SMALL)
     private val backButton = TextButton("Back", SimpleUi.skin, SimpleUi.STYLE_DANGER)
-    private val spawnButton = TextButton("Spawn Puck", SimpleUi.skin, SimpleUi.STYLE_SUCCESS)
+    private val spawnButton = TextButton("Serve", SimpleUi.skin, SimpleUi.STYLE_SUCCESS)
     private val networkIndicator = Image(SimpleUi.skin.getDrawable(SimpleUi.SKIN_PIXEL))
     private var playerRole: PlayerRole? = null
     private lateinit var startButton: TextButton
@@ -111,7 +105,6 @@ class GameScreen(
 
     private val world: World
     private val worldWalls = ArrayList<Body>()
-    private val goalSensors = ArrayList<Body>()
     private var puckBody: Body? = null
     private var localPusherBody: Body? = null
     private var remotePusherBody: Body? = null
@@ -142,22 +135,21 @@ class GameScreen(
     private var nextGoalId = 1
     private var localStartReady = false
     private var remoteStartReady = false
-    private var currentFrameGoal: PlayerRole? = null
 
-    private val puckBaseColor = Color(0.95f, 0.9f, 0.2f, 1f)
-    private val puckRadiusPx = 28f
+    private val puckBaseColor = Color.WHITE
+    private val puckRadiusPx = 24f
     private val worldWidth = 1.0f
     private val worldHeight = 2.0f
     private var ppm = 100f
     private val timeStep = 1f / 60f
     private val syncIntervalMs = 100L
-    private val pusherSyncIntervalMs = 25L
-    private val pusherRadiusWorld = worldWidth * 0.06f
-    private var pusherRadiusPx = 18f
-    private val pusherTouchOffsetWorld = pusherRadiusWorld * 1.4f
+    private val paddleSyncIntervalMs = 25L
+    private val paddleHalfWidthWorld = worldWidth * 0.18f
+    private val paddleHalfHeightWorld = worldHeight * 0.025f
+    private var paddleHalfWidthPx = 24f
+    private var paddleHalfHeightPx = 8f
     private val maxPuckSpeedWorld = 10f
-    private val maxPusherSpeedWorld = 15f
-    private val midlineAllowanceWorld = pusherRadiusWorld * 0.35f
+    private val maxPaddleSpeedWorld = 15f
     private val puckSnapDistanceWorld = 0.25f
     private val puckLerpSpeed = 12f
 
@@ -184,17 +176,14 @@ class GameScreen(
     // Field colors
     private val fieldColor = Color(0.05f, 0.1f, 0.15f, 1f)
     private val lineColor = Color(0.9f, 0.95f, 1f, 1f)
-    private val goalColor = Color(0.8f, 0.2f, 0.2f, 1f)
-    private val player1PusherColor = Color(0.2f, 0.9f, 0.6f, 1f)
-    private val player2PusherColor = Color(0.9f, 0.4f, 0.4f, 1f)
+    private val player1PusherColor = Color.WHITE
+    private val player2PusherColor = Color.WHITE
 
     // Field dimensions (will be calculated in resize)
     private var fieldWidth = 0f
     private var fieldHeight = 0f
     private var fieldX = 0f
     private var fieldY = 0f
-    private var goalWidth = 0f
-    private var goalDepth = 0f
     private var lineThickness = 0f
 
     init {
@@ -257,7 +246,7 @@ class GameScreen(
             setFillParent(true)
             background = SimpleUi.skin.newDrawable(SimpleUi.SKIN_PIXEL, Color(0f, 0f, 0f, 0.6f))
             startButton = TextButton("START MATCH", SimpleUi.skin, SimpleUi.STYLE_SUCCESS)
-            add(Label("Air Hockey P2P", SimpleUi.skin, SimpleUi.STYLE_TITLE)).padBottom(40f).row()
+            add(Label("Pong P2P", SimpleUi.skin, SimpleUi.STYLE_TITLE)).padBottom(40f).row()
             add(startButton).width(400f).height(100f)
             startButton.addListener(object : com.badlogic.gdx.scenes.scene2d.utils.ClickListener() {
                 override fun clicked(event: com.badlogic.gdx.scenes.scene2d.InputEvent?, x: Float, y: Float) {
@@ -295,23 +284,7 @@ class GameScreen(
 
     private fun setupPhysicsContactListener() {
         world.setContactListener(object : com.badlogic.gdx.physics.box2d.ContactListener {
-            override fun beginContact(contact: com.badlogic.gdx.physics.box2d.Contact) {
-                val fixtureA = contact.fixtureA
-                val fixtureB = contact.fixtureB
-                val bodyA = fixtureA.body
-                val bodyB = fixtureB.body
-                val isPuck = bodyA == puckBody || bodyB == puckBody
-
-                if (isPuck) {
-                    val otherFixture = if (bodyA == puckBody) fixtureB else fixtureA
-                    val data = otherFixture.userData
-                    if (data == "goal_top") {
-                        currentFrameGoal = PlayerRole.PLAYER1
-                    } else if (data == "goal_bottom") {
-                        currentFrameGoal = PlayerRole.PLAYER2
-                    }
-                }
-            }
+            override fun beginContact(contact: com.badlogic.gdx.physics.box2d.Contact) {}
             override fun endContact(contact: com.badlogic.gdx.physics.box2d.Contact) {}
             override fun preSolve(contact: com.badlogic.gdx.physics.box2d.Contact, oldManifold: com.badlogic.gdx.physics.box2d.Manifold) {}
             override fun postSolve(contact: com.badlogic.gdx.physics.box2d.Contact, impulse: com.badlogic.gdx.physics.box2d.ContactImpulse) {
@@ -522,18 +495,11 @@ class GameScreen(
         // Draw center line
         drawCenterLine()
 
-        // Draw center circle
-        drawCenterCircle()
-
-        // Draw goals
-        drawGoals()
-
         // Draw puck
         drawPuck()
         drawPushers()
 
         shapeRenderer.end()
-        drawGoalLabels()
         drawGoalOverlay()
     }
 
@@ -559,83 +525,14 @@ class GameScreen(
         shapeRenderer.rect(fieldX, centerY - thickness / 2f, fieldWidth, thickness)
     }
 
-    private fun drawCenterCircle() {
-        val centerX = fieldX + fieldWidth / 2f
-        val centerY = fieldY + fieldHeight / 2f
-        val radius = fieldHeight * 0.12f
-        val segments = 64
-
-        // Draw circle outline
-        shapeRenderer.color = lineColor
-        val thickness = lineThickness * 0.5f
-        for (i in 0 until segments) {
-            val angle1 = (i * 360f / segments) * MathUtils.degreesToRadians
-            val angle2 = ((i + 1) * 360f / segments) * MathUtils.degreesToRadians
-
-            val x1 = centerX + MathUtils.cos(angle1) * radius
-            val y1 = centerY + MathUtils.sin(angle1) * radius
-            val x2 = centerX + MathUtils.cos(angle2) * radius
-            val y2 = centerY + MathUtils.sin(angle2) * radius
-
-            shapeRenderer.rectLine(x1, y1, x2, y2, thickness)
-        }
-
-        // Draw center dot
-        shapeRenderer.circle(centerX, centerY, radius * 0.15f, 32)
-    }
-
-    private fun drawGoals() {
-        val centerX = fieldX + fieldWidth / 2f
-
-        // Top goal (opponent)
-        shapeRenderer.color = goalColor
-        val topGoalY = fieldY + fieldHeight - lineThickness
-        shapeRenderer.rect(
-            centerX - goalWidth / 2f,
-            topGoalY,
-            goalWidth,
-            goalDepth
-        )
-
-        // Top goal posts
-        shapeRenderer.color = lineColor
-        val postThickness = lineThickness * 0.8f
-        shapeRenderer.rect(centerX - goalWidth / 2f - postThickness, topGoalY, postThickness, goalDepth)
-        shapeRenderer.rect(centerX + goalWidth / 2f, topGoalY, postThickness, goalDepth)
-
-        // Bottom goal (player)
-        shapeRenderer.color = goalColor
-        val bottomGoalY = fieldY + lineThickness - goalDepth
-        shapeRenderer.rect(
-            centerX - goalWidth / 2f,
-            bottomGoalY,
-            goalWidth,
-            goalDepth
-        )
-
-        // Bottom goal posts
-        shapeRenderer.color = lineColor
-        shapeRenderer.rect(centerX - goalWidth / 2f - postThickness, bottomGoalY, postThickness, goalDepth)
-        shapeRenderer.rect(centerX + goalWidth / 2f, bottomGoalY, postThickness, goalDepth)
-    }
 
     private fun drawPuck() {
         val body = puckBody ?: return
         if (!body.isActive) return
         val x = fieldX + body.position.x * ppm
         val y = fieldY + body.position.y * ppm
-        val shadowOffset = puckRadiusPx * 0.18f
-        shapeRenderer.color = Color(0f, 0f, 0f, 0.25f)
-        shapeRenderer.circle(x + shadowOffset, y - shadowOffset, puckRadiusPx * 1.05f)
-
-        shapeRenderer.color = Color(0.78f, 0.72f, 0.08f, 1f)
-        shapeRenderer.circle(x, y, puckRadiusPx)
-
         shapeRenderer.color = puckBaseColor
-        shapeRenderer.circle(x, y, puckRadiusPx * 0.88f)
-
-        shapeRenderer.color = Color(1f, 1f, 0.85f, 0.7f)
-        shapeRenderer.circle(x - puckRadiusPx * 0.25f, y + puckRadiusPx * 0.25f, puckRadiusPx * 0.35f)
+        shapeRenderer.circle(x, y, puckRadiusPx)
     }
 
     private fun drawPushers() {
@@ -652,14 +549,13 @@ class GameScreen(
     private fun drawPusherBody(body: Body, color: Color) {
         val x = fieldX + body.position.x * ppm
         val y = fieldY + body.position.y * ppm
-        val radius = pusherRadiusPx
-        val shadowOffset = radius * 0.15f
+        val halfWidth = paddleHalfWidthPx
+        val halfHeight = paddleHalfHeightPx
+        val shadowOffset = halfHeight * 0.25f
         shapeRenderer.color = Color(0f, 0f, 0f, 0.2f)
-        shapeRenderer.circle(x + shadowOffset, y - shadowOffset, radius * 1.02f)
+        shapeRenderer.rect(x - halfWidth + shadowOffset, y - halfHeight - shadowOffset, halfWidth * 2f, halfHeight * 2f)
         shapeRenderer.color = color
-        shapeRenderer.circle(x, y, radius)
-        shapeRenderer.color = Color(1f, 1f, 1f, 0.25f)
-        shapeRenderer.circle(x - radius * 0.25f, y + radius * 0.25f, radius * 0.3f)
+        shapeRenderer.rect(x - halfWidth, y - halfHeight, halfWidth * 2f, halfHeight * 2f)
     }
 
     override fun resize(width: Int, height: Int) {
@@ -670,7 +566,7 @@ class GameScreen(
         val availableWidth = width - padding * 2
         val availableHeight = height - padding * 2 - topInset - bottomInset
 
-        // Air hockey table aspect ratio is typically 2:1 (height:width)
+        // Playfield aspect ratio (height:width)
         val aspectRatio = 2.0f
 
         if (availableHeight / availableWidth > aspectRatio) {
@@ -688,11 +584,10 @@ class GameScreen(
         fieldY = bottomInset + (height - topInset - bottomInset - fieldHeight) / 2f
 
         // Calculate dependent dimensions
-        goalWidth = fieldWidth * 0.35f
-        goalDepth = fieldHeight * 0.04f
         lineThickness = fieldWidth * 0.015f
         ppm = fieldWidth / worldWidth
-        pusherRadiusPx = pusherRadiusWorld * ppm
+        paddleHalfWidthPx = paddleHalfWidthWorld * ppm
+        paddleHalfHeightPx = paddleHalfHeightWorld * ppm
         viewport.update(width, height, true)
         pendingResize = true
     }
@@ -729,10 +624,8 @@ class GameScreen(
 
     private fun applyPusherSync() {
         val sync = networkManager.pusherSyncSignal.value ?: return
-        val targetY = if (playerRole == PlayerRole.PLAYER2) mirrorWorldY(sync.y) else sync.y
-        val targetVy = if (playerRole == PlayerRole.PLAYER2) -sync.vy else sync.vy
-        remotePusherTarget.set(sync.x, targetY)
-        remotePusherVelocity.set(sync.vx, targetVy)
+        remotePusherTarget.set(sync.x, paddleBaselineTopWorld())
+        remotePusherVelocity.set(sync.vx, 0f)
         remotePusherBody?.isAwake = true
     }
 
@@ -825,13 +718,11 @@ class GameScreen(
         if (!networkManager.roleVerified.value) return
         val body = localPusherBody ?: return
         val now = System.currentTimeMillis()
-        if (now - lastPusherSyncSentAtMs < pusherSyncIntervalMs) return
+        if (now - lastPusherSyncSentAtMs < paddleSyncIntervalMs) return
         lastPusherSyncSentAtMs = now
         val pos = body.position
         val vel = body.linearVelocity
-        val sendY = if (playerRole == PlayerRole.PLAYER2) mirrorWorldY(pos.y) else pos.y
-        val sendVy = if (playerRole == PlayerRole.PLAYER2) -vel.y else vel.y
-        val payload = GameSignalProtocol.buildPaddleData(pos.x, sendY, vel.x, sendVy)
+        val payload = GameSignalProtocol.buildPaddleData(pos.x, paddleBaselineBottomWorld(), vel.x, 0f)
         networkManager.sendGameData(payload)
     }
 
@@ -902,8 +793,8 @@ class GameScreen(
             type = BodyDef.BodyType.KinematicBody
             position.set(x, y)
         }
-        val shape = CircleShape().apply {
-            radius = pusherRadiusWorld
+        val shape = com.badlogic.gdx.physics.box2d.PolygonShape().apply {
+            setAsBox(paddleHalfWidthWorld, paddleHalfHeightWorld)
         }
         val fixtureDef = FixtureDef().apply {
             this.shape = shape
@@ -912,7 +803,7 @@ class GameScreen(
         }
         val body = world.createBody(bodyDef)
         val fixture = body.createFixture(fixtureDef)
-        fixture.userData = "pusher"
+        fixture.userData = "paddle"
         shape.dispose()
         return body
     }
@@ -923,19 +814,12 @@ class GameScreen(
             world.destroyBody(body)
         }
         worldWalls.clear()
-        for (body in goalSensors) {
-            world.destroyBody(body)
-        }
-        goalSensors.clear()
 
         val left = playableLeftWorld()
         val right = playableRightWorld()
-        val bottom = playableBottomWorld()
-        val top = playableTopWorld()
+        val bottom = 0f
+        val top = worldHeight
         if (right <= left || top <= bottom) return
-
-        val goalHalf = goalOpeningHalfWorld(left, right)
-        val centerX = worldWidth / 2f
 
         val bodyDef = BodyDef().apply { type = BodyDef.BodyType.StaticBody }
         val wallThickness = 0.5f // Thick walls to prevent tunneling
@@ -961,42 +845,14 @@ class GameScreen(
         
         // Right wall
         addWallBox(right, bottom, wallThickness, top - bottom)
-
-        // Top walls (left and right of goal)
-        addWallBox(left, top, centerX - goalHalf - left, wallThickness)
-        addWallBox(centerX + goalHalf, top, right - (centerX + goalHalf), wallThickness)
-
-        // Bottom walls (left and right of goal)
-        addWallBox(left, bottom - wallThickness, centerX - goalHalf - left, wallThickness)
-        addWallBox(centerX + goalHalf, bottom - wallThickness, right - (centerX + goalHalf), wallThickness)
-
-        val sensorDepth = (puckRadiusPx / ppm) * 1.2f
-        fun addGoalSensor(tag: String, centerY: Float) {
-            val shape = com.badlogic.gdx.physics.box2d.PolygonShape().apply {
-                setAsBox(goalHalf, sensorDepth / 2f, Vector2(centerX, centerY), 0f)
-            }
-            val fixtureDef = FixtureDef().apply {
-                this.shape = shape
-                isSensor = true
-            }
-            val body = world.createBody(bodyDef)
-            val fixture = body.createFixture(fixtureDef)
-            fixture.userData = tag
-            shape.dispose()
-            goalSensors.add(body)
-        }
-
-        addGoalSensor("goal_top", top + sensorDepth / 2f)
-        addGoalSensor("goal_bottom", bottom - sensorDepth / 2f)
     }
 
     private fun ensurePushers() {
         if (localPusherBody != null && remotePusherBody != null) return
         
-        // Position directly in front of goals
-        val inset = pusherInsetWorld()
-        val localStart = Vector2(worldWidth / 2f, 0f + inset)
-        val remoteStart = Vector2(worldWidth / 2f, worldHeight - inset)
+        // Position directly on baselines
+        val localStart = Vector2(worldWidth / 2f, paddleBaselineBottomWorld())
+        val remoteStart = Vector2(worldWidth / 2f, paddleBaselineTopWorld())
         
         if (localPusherBody == null) {
             localPusherBody = createPusherBody(localStart.x, localStart.y)
@@ -1012,9 +868,8 @@ class GameScreen(
 
     private fun resetPusherPositions() {
         ensurePushers()
-        val inset = pusherInsetWorld()
-        val localStart = Vector2(worldWidth / 2f, 0f + inset)
-        val remoteStart = Vector2(worldWidth / 2f, worldHeight - inset)
+        val localStart = Vector2(worldWidth / 2f, paddleBaselineBottomWorld())
+        val remoteStart = Vector2(worldWidth / 2f, paddleBaselineTopWorld())
 
         localPusherBody?.apply {
             setTransform(localStart, 0f)
@@ -1068,15 +923,24 @@ class GameScreen(
         if (goalOverlayTimer > 0f) return
         if (gameState != GameState.PLAYING) return
         if (playerRole != PlayerRole.PLAYER1) return // Only host detects goals
-        
-        val goal = currentFrameGoal
-        currentFrameGoal = null
-        
-        if (goal != null) {
-            registerGoal(goal)
+
+        val body = puckBody ?: return
+        if (!body.isActive) return
+        val pos = body.position
+        val radius = puckRadiusPx / ppm
+        val outTop = worldHeight + radius
+        val outBottom = -radius
+
+        val detectedGoal = when {
+            pos.y > outTop -> PlayerRole.PLAYER1
+            pos.y < outBottom -> PlayerRole.PLAYER2
+            else -> null
+        }
+
+        if (detectedGoal != null) {
+            registerGoal(detectedGoal)
         }
     }
-
     private fun registerGoal(scorer: PlayerRole) {
         if (playerRole != PlayerRole.PLAYER1) return
         if (goalOverlayTimer > 0f) return
@@ -1160,9 +1024,7 @@ class GameScreen(
 
     private fun mirrorWorldY(y: Float): Float {
         if (fieldHeight <= 0f) return y
-        val bottom = playableBottomWorld()
-        val top = playableTopWorld()
-        return bottom + top - y
+        return worldHeight - y
     }
 
     private fun updateLocalPusher(delta: Float) {
@@ -1174,15 +1036,14 @@ class GameScreen(
             val stagePoint = Vector2(touchVector)
             hudStage.screenToStageCoordinates(stagePoint)
             if (hudStage.hit(stagePoint.x, stagePoint.y, true) != null) {
-                tempVector.set(localPusherTarget)
+                tempVector.set(localPusherTarget.x, paddleBaselineBottomWorld())
             } else {
                 viewport.unproject(touchVector)
                 val worldX = (touchVector.x - fieldX) / ppm
-                val worldY = (touchVector.y - fieldY) / ppm + pusherTouchOffsetWorld
-                tempVector.set(worldX, worldY)
+                tempVector.set(worldX, paddleBaselineBottomWorld())
             }
         } else {
-            tempVector.set(localPusherTarget)
+            tempVector.set(localPusherTarget.x, paddleBaselineBottomWorld())
         }
 
         clampLocalPusher(target.x, target.y, localPusherTarget)
@@ -1193,9 +1054,9 @@ class GameScreen(
         val vx = (localPusherTarget.x - currentPos.x) / dt
         val vy = (localPusherTarget.y - currentPos.y) / dt
 
-        // Clamp to max pusher speed to prevent extreme velocities
-        val clampedVx = MathUtils.clamp(vx, -maxPusherSpeedWorld, maxPusherSpeedWorld)
-        val clampedVy = MathUtils.clamp(vy, -maxPusherSpeedWorld, maxPusherSpeedWorld)
+        // Clamp to max paddle speed to prevent extreme velocities
+        val clampedVx = MathUtils.clamp(vx, -maxPaddleSpeedWorld, maxPaddleSpeedWorld)
+        val clampedVy = MathUtils.clamp(vy, -maxPaddleSpeedWorld, maxPaddleSpeedWorld)
 
         body.setLinearVelocity(clampedVx, clampedVy)
         body.isAwake = true
@@ -1216,9 +1077,9 @@ class GameScreen(
         val vx = (nextX - body.position.x) / dt
         val vy = (nextY - body.position.y) / dt
 
-        // Clamp to max pusher speed to prevent extreme velocities from network
-        val clampedVx = MathUtils.clamp(vx, -maxPusherSpeedWorld, maxPusherSpeedWorld)
-        val clampedVy = MathUtils.clamp(vy, -maxPusherSpeedWorld, maxPusherSpeedWorld)
+        // Clamp to max paddle speed to prevent extreme velocities from network
+        val clampedVx = MathUtils.clamp(vx, -maxPaddleSpeedWorld, maxPaddleSpeedWorld)
+        val clampedVy = MathUtils.clamp(vy, -maxPaddleSpeedWorld, maxPaddleSpeedWorld)
 
         body.setLinearVelocity(clampedVx, clampedVy)
         body.isAwake = true
@@ -1226,27 +1087,21 @@ class GameScreen(
     }
 
     private fun clampLocalPusher(x: Float, y: Float, out: Vector2): Vector2 {
-        val inset = pusherInsetWorld()
-        val minX = 0f + inset
-        val maxX = worldWidth - inset
-        val minY = 0f + inset
-        val maxY = worldHeight / 2f + midlineAllowanceWorld
+        val minX = paddleMinXWorld()
+        val maxX = paddleMaxXWorld()
         out.set(
             MathUtils.clamp(x, minX, maxX),
-            MathUtils.clamp(y, minY, maxY)
+            paddleBaselineBottomWorld()
         )
         return out
     }
 
     private fun clampRemotePusher(x: Float, y: Float, out: Vector2): Vector2 {
-        val inset = pusherInsetWorld()
-        val minX = 0f + inset
-        val maxX = worldWidth - inset
-        val minY = worldHeight / 2f - midlineAllowanceWorld
-        val maxY = worldHeight - inset
+        val minX = paddleMinXWorld()
+        val maxX = paddleMaxXWorld()
         out.set(
             MathUtils.clamp(x, minX, maxX),
-            MathUtils.clamp(y, minY, maxY)
+            paddleBaselineTopWorld()
         )
         return out
     }
@@ -1261,76 +1116,35 @@ class GameScreen(
         return worldWidth - inset
     }
 
-    private fun playableBottomWorld(): Float {
-        val inset = (lineThickness + puckRadiusPx) / ppm
-        return 0f + inset
+    private fun paddleBaselineBottomWorld(): Float {
+        return (lineThickness / ppm) + paddleHalfHeightWorld
     }
 
-    private fun playableTopWorld(): Float {
-        val inset = (lineThickness + puckRadiusPx) / ppm
-        return worldHeight - inset
+    private fun paddleBaselineTopWorld(): Float {
+        return worldHeight - (lineThickness / ppm) - paddleHalfHeightWorld
     }
 
-    private fun goalOpeningHalfWorld(left: Float, right: Float): Float {
-        val half = (goalWidth / 2f) / ppm
-        val maxHalf = (right - left) * 0.45f
-        return MathUtils.clamp(half, pusherRadiusWorld * 0.8f, maxHalf)
+    private fun paddleMinXWorld(): Float {
+        return (lineThickness / ppm) + paddleHalfWidthWorld
     }
 
-    private fun pusherInsetWorld(): Float {
-        return (lineThickness / ppm) + pusherRadiusWorld
+    private fun paddleMaxXWorld(): Float {
+        return worldWidth - (lineThickness / ppm) - paddleHalfWidthWorld
     }
 
     private fun spawnPuckForRequester(requester: PlayerRole) {
         ensurePushers()
-        val pusher = if (requester == PlayerRole.PLAYER1) localPusherBody else remotePusherBody
-        val base = pusher?.position ?: return
-        val direction = if (requester == PlayerRole.PLAYER1) 1f else -1f
-        val offset = pusherRadiusWorld * 2.2f
-        val minX = playableLeftWorld()
-        val maxX = playableRightWorld()
-        val minY = playableBottomWorld()
-        val maxY = playableTopWorld()
-        val spawnX = MathUtils.clamp(base.x, minX, maxX)
-        val spawnY = MathUtils.clamp(base.y + direction * offset, minY, maxY)
-        val angle = Random.nextFloat() * MathUtils.PI2
+        val spawnX = worldWidth / 2f
+        val spawnY = worldHeight / 2f
+        val baseAngle = if (requester == PlayerRole.PLAYER1) MathUtils.PI / 2f else -MathUtils.PI / 2f
+        val angleJitter = (Random.nextFloat() - 0.5f) * 0.6f
+        val angle = baseAngle + angleJitter
         val speed = 3.2f
         val spawn = PuckSpawnSignal(nextSpawnId++, spawnX, spawnY, angle, speed)
         networkManager.sendPuckSpawn(spawn)
         lastSpawnId = spawn.id
         lastSyncId = 0
         spawnPuck(spawn)
-    }
-
-    private fun drawGoalLabels() {
-        val bottomLabel = when (playerRole) {
-            PlayerRole.PLAYER1 -> PlayerRole.PLAYER1.displayName
-            PlayerRole.PLAYER2 -> PlayerRole.PLAYER2.displayName
-            else -> ""
-        }
-        val topLabel = when (playerRole) {
-            PlayerRole.PLAYER1 -> PlayerRole.PLAYER2.displayName
-            PlayerRole.PLAYER2 -> PlayerRole.PLAYER1.displayName
-            else -> ""
-        }
-        if (bottomLabel.isEmpty() && topLabel.isEmpty()) return
-        spriteBatch.projectionMatrix = viewport.camera.combined
-        spriteBatch.begin()
-        val centerX = fieldX + fieldWidth / 2f
-        val topGoalY = fieldY + fieldHeight - lineThickness
-        val bottomGoalY = fieldY + lineThickness - goalDepth
-        drawCenteredLabel(topLabel, centerX, topGoalY + goalDepth / 2f)
-        drawCenteredLabel(bottomLabel, centerX, bottomGoalY + goalDepth / 2f)
-        spriteBatch.end()
-    }
-
-    private fun drawCenteredLabel(text: String, centerX: Float, centerY: Float) {
-        if (text.isEmpty()) return
-        goalLayout.setText(goalFont, text)
-        val x = centerX - goalLayout.width / 2f
-        val y = centerY + goalLayout.height / 2f
-        goalFont.color = Color.WHITE
-        goalFont.draw(spriteBatch, goalLayout, x, y)
     }
 
     private fun drawGoalOverlay() {
@@ -1354,7 +1168,7 @@ class GameScreen(
 
         spriteBatch.projectionMatrix = viewport.camera.combined
         spriteBatch.begin()
-        val titleText = "GOAL!"
+        val titleText = "POINT!"
         val scoreText = "P1 $scoreP1  -  $scoreP2 P2"
         goalLayout.setText(goalFont, titleText)
         val titleX = panelX + (panelW - goalLayout.width) / 2f
